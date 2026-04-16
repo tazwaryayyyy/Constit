@@ -5,10 +5,16 @@ import { applyMapping, ColumnMapping } from "@/lib/csv";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { campaign_id, rows, mapping } = body as {
+  const {
+    campaign_id,
+    rows,
+    mapping,
+    duplicate_strategy = "skip", // "skip" | "keep_both"
+  } = body as {
     campaign_id: string;
     rows: Record<string, string>[];
     mapping: ColumnMapping;
+    duplicate_strategy?: string;
   };
 
   if (!campaign_id || !rows?.length || !mapping) {
@@ -18,18 +24,41 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Apply the user-confirmed mapping to produce clean contact objects
-  const contacts = applyMapping(rows, mapping);
+  // Apply user-confirmed mapping — returns valid rows and error rows.
+  const { valid, errors } = applyMapping(rows, mapping);
 
-  if (contacts.length === 0) {
+  if (valid.length === 0) {
     return NextResponse.json(
-      { error: "No valid contacts found after mapping. Check that the name column is set correctly." },
+      { error: "No importable contacts found. Check that the name column is mapped correctly." },
       { status: 400 }
     );
   }
 
-  // Bulk insert — never loop and insert one at a time
-  const rows_to_insert = contacts.map((c) => ({
+  // Detect duplicates against existing contacts in this campaign (by phone).
+  const { data: existing } = await supabase
+    .from("contacts")
+    .select("phone")
+    .eq("campaign_id", campaign_id);
+
+  const existingPhones = new Set(
+    (existing ?? []).map((c: { phone: string | null }) => c.phone).filter(Boolean)
+  );
+
+  const duplicates = valid.filter((c) => c.phone && existingPhones.has(c.phone));
+  const uniqueRows = valid.filter((c) => !c.phone || !existingPhones.has(c.phone));
+
+  const toInsert = duplicate_strategy === "keep_both" ? valid : uniqueRows;
+
+  if (toInsert.length === 0) {
+    return NextResponse.json({
+      imported: 0,
+      skipped: duplicates.length,
+      duplicateCount: duplicates.length,
+      errors,
+    });
+  }
+
+  const rowsToInsert = toInsert.map((c) => ({
     campaign_id,
     name: c.name,
     phone: c.phone || null,
@@ -39,14 +68,17 @@ export async function POST(req: NextRequest) {
     status: "pending",
   }));
 
-  const { error } = await supabase.from("contacts").insert(rows_to_insert);
+  const { error } = await supabase.from("contacts").insert(rowsToInsert);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   return NextResponse.json({
-    imported: contacts.length,
-    skipped: rows.length - contacts.length,
+    imported: toInsert.length,
+    skipped: duplicate_strategy === "skip" ? duplicates.length : 0,
+    duplicateCount: duplicates.length,
+    errors,
   });
 }
+

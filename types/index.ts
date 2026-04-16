@@ -19,6 +19,7 @@ export interface Contact {
   tags: string[];
   status: "pending" | "contacted" | "replied" | "opted_out";
   notes: string;
+  last_contacted_at: string | null;
   created_at: string;
 }
 
@@ -36,20 +37,10 @@ export interface Message {
   created_at: string;
 }
 
-export interface Volunteer {
+export interface ActivityLog {
   id: string;
   campaign_id: string;
-  name: string;
-  contact: string;
-  role: "manager" | "organizer" | "volunteer";
-}
-
-export interface Task {
-  id: string;
-  volunteer_id: string;
-  message_id: string | null;
-  contact_id: string;
-  status: "pending" | "in_progress" | "done" | "failed";
+  event: string;
+  details: string | null;
   created_at: string;
-  completed_at: string | null;
 }
