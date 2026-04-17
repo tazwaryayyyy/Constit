@@ -6,6 +6,8 @@ Constit helps political organizers and civic campaigns do one job really well: r
 
 No bloated CRM. No agency retainer. No guesswork.
 
+Live app: https://constit.vercel.app
+
 ---
 
 ## What it does
@@ -218,7 +220,7 @@ Use `{name}` anywhere in your message text. On export, each contact row gets the
 
 ### Opt-out compliance
 
-The opt-out checkbox appends `"Reply STOP to opt out."` — but only when the composed message (after name substitution) still fits within a single segment. The export route uses full `analyzeSMS()` math for this check, not a simple `.length <= 160` comparison.
+The opt-out checkbox appends `"Reply STOP to opt out."` for every contact when enabled. The export route uses full `analyzeSMS()` math and surfaces warnings if opt-out or name variance increases segment count.
 
 ### Pre-export validation
 
@@ -250,7 +252,7 @@ Every meaningful action is timestamped and shown in a timeline at the bottom of 
 | `POST` | `/api/campaign/create` | Create campaign, returns `{ id }` |
 | `POST` | `/api/generate-messages` | Generate variants via Groq, insert to DB |
 | `POST` | `/api/contacts/import` | Import CSV rows with dup detection |
-| `GET` | `/api/contacts/export/[id]` | Stream personalized CSV |
+| `GET` | `/api/contacts/export/[id]` | Stream personalized CSV (authenticated request required) |
 | `PATCH` | `/api/messages/[id]` | Update SMS text, validated at boundary |
 | `POST` | `/api/messages/select` | Select variant (deselects all others first) |
 | `GET` | `/api/activity` | Get last 10 log events for a campaign |
@@ -279,7 +281,13 @@ Constit deploys to Vercel in under 2 minutes.
 3. Add all environment variables from `.env.example` in the Vercel dashboard
 4. Deploy
 
+Production: https://constit.vercel.app
+
 No build config needed — Next.js is auto-detected.
+
+### Production note
+
+For exports on production, use the in-app **Download CSV** button from the campaign Export tab after selecting a message variant. The app sends an authenticated request so Supabase RLS can resolve your user correctly.
 
 ---
 
