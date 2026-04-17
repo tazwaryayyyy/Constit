@@ -29,6 +29,8 @@ export default function CampaignPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [exportConfirmed, setExportConfirmed] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   useEffect(() => {
     loadAll();
@@ -127,6 +129,41 @@ export default function CampaignPage() {
     if (status === "contacted") update.last_contacted_at = new Date().toISOString();
     await supabase.from("contacts").update(update).eq("id", contactId);
     setContacts((cs) => cs.map((c) => c.id === contactId ? { ...c, ...update } : c));
+  }
+
+  async function handleExport() {
+    setExportError("");
+    setExporting(true);
+
+    const url = `/api/contacts/export/${id}${includeOptOut ? "?opt_out=true" : ""}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: await getAuthHeaders(),
+    });
+
+    if (!res.ok) {
+      let message = "Failed to export CSV.";
+      try {
+        const err = await res.json();
+        if (err?.error) message = err.error;
+      } catch {
+        // Ignore parse failures and keep default message.
+      }
+      setExportError(message);
+      setExporting(false);
+      return;
+    }
+
+    const blob = await res.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = `constit-export-${id}.csv`;
+    a.click();
+    URL.revokeObjectURL(downloadUrl);
+
+    setExporting(false);
+    logActivity("Exported CSV", `${pendingCount} contacts`);
   }
 
   const selectedMessage = messages.find((m) => m.selected);
@@ -613,16 +650,22 @@ export default function CampaignPage() {
                 </label>
               )}
 
-              <a
-                href={`/api/contacts/export/${id}${includeOptOut ? "?opt_out=true" : ""}`}
-                onClick={() => logActivity("Exported CSV", `${pendingContacts.length} contacts, worst-case ${maxSegments} seg`)}
+              {exportError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">
+                  {exportError}
+                </p>
+              )}
+
+              <button
+                onClick={handleExport}
+                disabled={exporting || !(selectedMessage && (!hasWarning || exportConfirmed))}
                 className={`inline-block px-5 py-2.5 text-sm rounded-lg transition-colors ${selectedMessage && (!hasWarning || exportConfirmed)
                   ? "bg-zinc-900 text-white hover:bg-zinc-700"
-                  : "bg-zinc-100 text-zinc-400 cursor-not-allowed pointer-events-none"
+                  : "bg-zinc-100 text-zinc-400 cursor-not-allowed"
                   }`}
               >
-                Download CSV ({pendingContacts.length} contacts)
-              </a>
+                {exporting ? "Downloading..." : `Download CSV (${pendingContacts.length} contacts)`}
+              </button>
             </div>
           </div>
         );

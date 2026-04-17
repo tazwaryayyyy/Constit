@@ -1,32 +1,47 @@
 // app/api/contacts/export/[campaign_id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { renderMessage } from "@/lib/sms";
+import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { campaign_id: string } }
 ) {
-  const supabase = createSupabaseServerClient();
+  const { user, db } = await getRouteSupabaseAndUser(req);
+
+  if (!user || !db) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { campaign_id } = params;
   const includeOptOut = req.nextUrl.searchParams.get("opt_out") === "true";
 
   // Get selected message for this campaign
-  const { data: message } = await supabase
+  const { data: message, error: messageError } = await db
     .from("messages")
     .select("sms, call_to_action, tone")
     .eq("campaign_id", campaign_id)
     .eq("selected", true)
     .single();
 
+  if (messageError && messageError.code !== "PGRST116") {
+    if (messageError.message.toLowerCase().includes("row-level security")) {
+      return NextResponse.json({ error: "Unauthorized for this export operation." }, { status: 403 });
+    }
+    return NextResponse.json({ error: messageError.message }, { status: 500 });
+  }
+
   // Get all pending contacts
-  const { data: contacts, error } = await supabase
+  const { data: contacts, error } = await db
     .from("contacts")
     .select("name, phone, email, tags, status")
     .eq("campaign_id", campaign_id)
     .eq("status", "pending");
 
   if (error) {
+    if (error.message.toLowerCase().includes("row-level security")) {
+      return NextResponse.json({ error: "Unauthorized for this export operation." }, { status: 403 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
