@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 import { Campaign, Contact, Message, ActivityLog } from "@/types";
 import { renderMessage } from "@/lib/sms";
 import CSVImporter from "@/components/CSVImporter";
@@ -34,6 +34,7 @@ export default function CampaignPage() {
   }, [id]);
 
   async function loadAll() {
+    const supabase = getSupabaseClient();
     const [{ data: camp }, { data: conts }, { data: msgs }, { data: logs }] = await Promise.all([
       supabase.from("campaigns").select("*").eq("id", id).single(),
       supabase.from("contacts").select("*").eq("campaign_id", id).order("created_at"),
@@ -47,6 +48,7 @@ export default function CampaignPage() {
   }
 
   async function logActivity(event: string, details?: string) {
+    const supabase = getSupabaseClient();
     await supabase.from("activity_log").insert({ campaign_id: id, event, details: details ?? null });
     setActivityLog((prev) => [
       { id: crypto.randomUUID(), campaign_id: id, event, details: details ?? null, created_at: new Date().toISOString() },
@@ -115,6 +117,7 @@ export default function CampaignPage() {
   }
 
   async function handleStatusChange(contactId: string, status: Contact["status"]) {
+    const supabase = getSupabaseClient();
     const update: Record<string, unknown> = { status };
     // Record the timestamp when a contact is first reached out to.
     if (status === "contacted") update.last_contacted_at = new Date().toISOString();
@@ -610,8 +613,8 @@ export default function CampaignPage() {
                 href={`/api/contacts/export/${id}${includeOptOut ? "?opt_out=true" : ""}`}
                 onClick={() => logActivity("Exported CSV", `${pendingContacts.length} contacts, worst-case ${maxSegments} seg`)}
                 className={`inline-block px-5 py-2.5 text-sm rounded-lg transition-colors ${selectedMessage && (!hasWarning || exportConfirmed)
-                    ? "bg-zinc-900 text-white hover:bg-zinc-700"
-                    : "bg-zinc-100 text-zinc-400 cursor-not-allowed pointer-events-none"
+                  ? "bg-zinc-900 text-white hover:bg-zinc-700"
+                  : "bg-zinc-100 text-zinc-400 cursor-not-allowed pointer-events-none"
                   }`}
               >
                 Download CSV ({pendingContacts.length} contacts)
