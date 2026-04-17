@@ -63,7 +63,7 @@ create table messages (
   id              uuid primary key default gen_random_uuid(),
   campaign_id     uuid references campaigns(id) on delete cascade,
   tone            text not null,
-  sms             text not null,
+  sms             text not null check (length(trim(sms)) > 0),
   sms_char_count  integer generated always as (char_length(sms)) stored,
   call_to_action  text,
   selected        boolean default false,
@@ -100,9 +100,12 @@ create policy "Users see own activity" on activity_log
     )
   );
 
--- ── Migration note ──────────────────────────────────────────────────────────
--- volunteers and tasks tables have been removed as unused at this stage.
--- If upgrading an existing DB, run:
+-- ── Migration notes ─────────────────────────────────────────────────────────
+-- If upgrading an existing DB from an earlier schema, run:
 --   drop table if exists tasks;
 --   drop table if exists volunteers;
+--   alter table messages drop column if exists long_text;
+--   alter table messages drop column if exists script;
+--   alter table messages drop column if exists performance_score;
+--   alter table messages add constraint messages_sms_nonempty check (length(trim(sms)) > 0);
 

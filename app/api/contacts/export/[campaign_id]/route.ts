@@ -38,29 +38,46 @@ export async function GET(
 
   const templateSms = message.sms;
 
-  const headers = ["name", "phone", "email", "tags", "status", "message_sms", "sms_segments", "sms_encoding"];
-  const csvRows = [
-    headers.join(","),
-    ...(contacts ?? []).map((c) => {
-      // Use renderMessage — the single source of truth for final SMS content.
-      const { text: sms, analysis } = renderMessage(
-        { name: c.name },
-        templateSms,
-        { optOut: includeOptOut }
-      );
+  // Post-render integrity check: assert the final SMS is non-empty for every contact.
+  // An empty template ("") with no opt-out produces an empty string — never export blank rows.
+  type ExportRow = string;
+  const emptyNameList: string[] = [];
 
-      return [
-        `"${(c.name ?? "").replace(/"/g, '""')}"`,
-        `"${c.phone ?? ""}"`,
-        `"${c.email ?? ""}"`,
-        `"${(c.tags ?? []).join("; ")}"`,
-        c.status,
-        `"${sms.replace(/"/g, '""')}"`,
-        analysis.segments,
-        analysis.encoding,
-      ].join(",");
-    }),
-  ];
+  const dataRows: ExportRow[] = (contacts ?? []).map((c) => {
+    const { text: sms, analysis } = renderMessage(
+      { name: c.name },
+      templateSms,
+      { optOut: includeOptOut }
+    );
+
+    // Guard: rendered text must have content. If blank, record it and skip.
+    if (!sms.trim()) {
+      emptyNameList.push(c.name ?? "(blank)");
+      return "";
+    }
+
+    return [
+      `"${(c.name ?? "").replace(/"/g, '""')}"`,
+      `"${c.phone ?? ""}"`,
+      `"${c.email ?? ""}"`,
+      `"${(c.tags ?? []).join("; ")}"`,
+      c.status,
+      `"${sms.replace(/"/g, '""')}"`,
+      analysis.segments,
+      analysis.encoding,
+    ].join(",");
+  }).filter(Boolean);
+
+  // If every contact produced an empty render, abort — sending blank texts is worse than not sending.
+  if (dataRows.length === 0) {
+    return NextResponse.json(
+      { error: "Every contact produced an empty message. Check that the message template is not blank." },
+      { status: 422 }
+    );
+  }
+
+  const headers = ["name", "phone", "email", "tags", "status", "message_sms", "sms_segments", "sms_encoding"];
+  const csvRows = [headers.join(","), ...dataRows];
 
   return new NextResponse(csvRows.join("\n"), {
     headers: {

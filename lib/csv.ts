@@ -2,38 +2,16 @@
 // Robust CSV parsing. Real voter data is ugly. This handles it.
 
 import Papa from "papaparse";
+import type {
+  ParsedRow,
+  ErrorRow,
+  CSVColumn,
+  ParseResult,
+  MappingResult,
+  ColumnMapping,
+} from "@/types/csv";
 
-export interface ParsedRow {
-  name: string;
-  phone: string;   // normalized phone (E.164 where detectable)
-  email: string;
-  tags: string[];
-  notes: string;
-}
-
-export interface ErrorRow {
-  rowIndex: number;
-  rawName: string;
-  rawPhone: string;
-  errors: string[];
-}
-
-export interface CSVColumn {
-  key: string;
-  sample: string[];
-}
-
-export interface ParseResult {
-  columns: CSVColumn[];
-  rows: Record<string, string>[];
-  totalRows: number;
-  errors: string[];
-}
-
-export interface MappingResult {
-  valid: ParsedRow[];
-  errors: ErrorRow[];
-}
+export type { ParsedRow, ErrorRow, CSVColumn, ParseResult, MappingResult, ColumnMapping };
 
 // ── Phone normalization ───────────────────────────────────────────────────
 // Handles: 017xxxxxxxx, +88017xxxxxxxx, 88017xxxxxxxx, (555) 555-5555, etc.
@@ -103,16 +81,6 @@ export function parseCSVForMapping(csvString: string): ParseResult {
     totalRows: result.data.length,
     errors,
   };
-}
-
-export interface ColumnMapping {
-  firstName: string | null;
-  lastName: string | null;
-  fullName: string | null;
-  phone: string | null;
-  email: string | null;
-  tags: string | null;
-  notes: string | null;
 }
 
 // ── Step 2: Apply user-confirmed mapping → produce clean rows + error rows ─

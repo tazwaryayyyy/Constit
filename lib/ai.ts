@@ -69,8 +69,6 @@ const BLOCKED_PATTERNS = [
   /\btogether we can\b/i,
   /\bnow more than ever\b/i,
   /\bwe're reaching out about an important issue\b/i,
-  // All-caps words (4+ letters) — hallmark of spam. Allow 3-letter acronyms (EPA, SMS, USA, etc.)
-  /\b[A-Z]{4,}\b/,
   // Excessive punctuation
   /[!?]{2,}/,
 ];
@@ -96,6 +94,17 @@ function sanitize(raw: unknown): GeneratedMessage | null {
       console.warn(`[Constit] sanitize: rejected message matching pattern ${pattern} — "${sms.slice(0, 60)}"`);
       return null;
     }
+  }
+
+  // Uppercase ratio check — structural constraint, not a pattern guess.
+  // Catches "FREE MONEY NOW" (100%) and "FrEe CaSh NoW" (57%) equally.
+  // Ignores messages with fewer than 10 letters to avoid false-positives on short text.
+  // Threshold: >50% uppercase letters is spam tone regardless of word shape.
+  const letters = sms.match(/[a-zA-Z]/g) ?? [];
+  const upperLetters = sms.match(/[A-Z]/g) ?? [];
+  if (letters.length > 10 && upperLetters.length / letters.length > 0.5) {
+    console.warn(`[Constit] sanitize: rejected message — ${Math.round(upperLetters.length / letters.length * 100)}% uppercase — "${sms.slice(0, 60)}"`);
+    return null;
   }
 
   // Must contain at least one concrete action verb — "Hi, we're reaching out" passes blocked

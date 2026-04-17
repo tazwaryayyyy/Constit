@@ -27,6 +27,7 @@ export default function CampaignPage() {
   const [messageLocked, setMessageLocked] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [exportConfirmed, setExportConfirmed] = useState(false);
 
   useEffect(() => {
     loadAll();
@@ -377,10 +378,10 @@ export default function CampaignPage() {
 
             {/* ── Send readiness bar ── */}
             <div className={`rounded-xl border px-5 py-4 flex items-center gap-4 ${!selectedMessage
-                ? "bg-zinc-50 border-zinc-200"
-                : hasWarning
-                  ? "bg-amber-50 border-amber-200"
-                  : "bg-emerald-50 border-emerald-200"
+              ? "bg-zinc-50 border-zinc-200"
+              : hasWarning
+                ? "bg-amber-50 border-amber-200"
+                : "bg-emerald-50 border-emerald-200"
               }`}>
               <span className={`text-lg ${!selectedMessage ? "text-zinc-400" : hasWarning ? "text-amber-500" : "text-emerald-600"}`}>
                 {!selectedMessage ? "○" : hasWarning ? "⚠" : "✓"}
@@ -583,10 +584,32 @@ export default function CampaignPage() {
                 </div>
               )}
 
+              {/* Intent confirmation — required when any cost warning is active */}
+              {hasWarning && (
+                <label className="flex items-start gap-3 cursor-pointer border border-amber-200 bg-amber-50 rounded-lg px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={exportConfirmed}
+                    onChange={(e) => setExportConfirmed(e.target.checked)}
+                    className="mt-0.5 accent-zinc-900"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-amber-900">I've reviewed the warnings above</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      {[
+                        maxSegments > 1 && `Up to ${maxSegments} segments per contact.`,
+                        optOutAddsSegmentForAny && "Opt-out suffix increases segment count for some contacts.",
+                        hasSegmentVariance && `${twoSegCount} contacts will receive 2 segments due to name length.`,
+                      ].filter(Boolean).join(" ")}
+                    </p>
+                  </div>
+                </label>
+              )}
+
               <a
                 href={`/api/contacts/export/${id}${includeOptOut ? "?opt_out=true" : ""}`}
                 onClick={() => logActivity("Exported CSV", `${pendingContacts.length} contacts, worst-case ${maxSegments} seg`)}
-                className={`inline-block px-5 py-2.5 text-sm rounded-lg transition-colors ${selectedMessage
+                className={`inline-block px-5 py-2.5 text-sm rounded-lg transition-colors ${selectedMessage && (!hasWarning || exportConfirmed)
                     ? "bg-zinc-900 text-white hover:bg-zinc-700"
                     : "bg-zinc-100 text-zinc-400 cursor-not-allowed pointer-events-none"
                   }`}
