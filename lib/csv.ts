@@ -149,16 +149,24 @@ export function applyMapping(
     }
 
     // ── Phone ─────────────────────────────────────────────────────
+    // Hard gate: if a phone column is mapped, every row MUST have a valid phone.
+    // An SMS campaign with no phone number is a dead record — reject, don't silently pass.
     const rawPhone = mapping.phone ? (row[mapping.phone] ?? "").trim() : "";
     let normalizedPhone = "";
-    if (rawPhone) {
-      const result = normalizePhone(rawPhone);
-      normalizedPhone = result.normalized;
-      if (!result.valid) {
-        rowErrors.push(`Invalid phone "${rawPhone}": ${result.warning}`);
-        normalizedPhone = ""; // don't store an invalid phone
-      } else if (result.warning) {
-        rowErrors.push(`Phone note: ${result.warning}`);
+    if (mapping.phone) {
+      if (!rawPhone) {
+        rowErrors.push("Missing phone — row rejected (phone column is mapped but value is empty)");
+      } else {
+        const result = normalizePhone(rawPhone);
+        if (!result.valid) {
+          rowErrors.push(`Invalid phone "${rawPhone}": ${result.warning} — row rejected`);
+          // normalizedPhone stays "" — row will be flagged as error below
+        } else {
+          normalizedPhone = result.normalized;
+          if (result.warning) {
+            rowErrors.push(`Phone note: ${result.warning}`);
+          }
+        }
       }
     }
 
@@ -183,7 +191,15 @@ export function applyMapping(
       return;
     }
 
-    // Rows with only warnings (phone/email issues) are still imported
+    // Rows with no/invalid phone are also rejected when phone column is mapped.
+    // Detect this by checking if mapping.phone is set but normalizedPhone is still empty.
+    const hasPhoneError = mapping.phone && !normalizedPhone;
+    if (hasPhoneError) {
+      errors.push({ rowIndex, rawName: name, rawPhone, errors: rowErrors });
+      return;
+    }
+
+    // Rows with only non-fatal warnings (e.g. email format, phone country code note) are imported
     if (rowErrors.length > 0) {
       errors.push({ rowIndex, rawName: name, rawPhone, errors: rowErrors });
     }

@@ -58,7 +58,6 @@ create policy "Users see own contacts" on contacts
   );
 
 -- ── Messages ─────────────────────────────────────────────────
--- performance_score: null until an A/B test picks a winner
 -- sms_char_count stored at write time — never trust the AI length
 create table messages (
   id              uuid primary key default gen_random_uuid(),
@@ -66,11 +65,8 @@ create table messages (
   tone            text not null,
   sms             text not null,
   sms_char_count  integer generated always as (char_length(sms)) stored,
-  long_text       text,
-  script          text,
   call_to_action  text,
   selected        boolean default false,
-  performance_score float default null,
   created_at      timestamptz default now()
 );
 

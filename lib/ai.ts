@@ -98,6 +98,14 @@ function sanitize(raw: unknown): GeneratedMessage | null {
     }
   }
 
+  // Must contain at least one concrete action verb — "Hi, we're reaching out" passes blocked
+  // patterns above but is still worthless without an actual ask.
+  const ACTION_VERBS = /\b(call|visit|sign|attend|contact|vote|register|join|support|share|send|submit|respond|reply|check|read|learn|find|take|go|come|ask|tell|meet|write|request|review|confirm|complete|fill|download|access|help|join|donate|pledge|petition|notify|report|raise|urge|push|demand|speak|stand|act|show)\b/i;
+  if (!ACTION_VERBS.test(sms)) {
+    console.warn(`[Constit] sanitize: rejected message — no action verb found — "${sms.slice(0, 60)}"`);
+    return null;
+  }
+
   // Do NOT silently truncate. Callers decide what to do with over-limit messages.
   return { tone: normTone, sms, call_to_action: cta };
 }

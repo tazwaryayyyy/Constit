@@ -29,11 +29,8 @@ export interface Message {
   tone: string;
   sms: string;
   sms_char_count: number;  // computed column — always accurate
-  long_text: string;
-  script: string;
   call_to_action: string;
   selected: boolean;
-  performance_score: number | null;
   created_at: string;
 }
 

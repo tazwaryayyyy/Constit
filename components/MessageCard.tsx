@@ -14,6 +14,7 @@ interface Props {
   onUpdate: (id: string, sms: string) => void;
   onEdited?: (id: string, tone: string) => void; // called after a successful inline edit save
   sampleName?: string; // first contact's name — used for {name} preview
+  locked?: boolean;    // when true, editing is disabled (locked for export)
 }
 
 // ── Message Safety Panel ────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ const TONE_BADGE: Record<string, string> = {
   urgent: "bg-red-50 text-red-700 border-red-200",
 };
 
-export default function MessageCard({ message, onSelect, onUpdate, onEdited, sampleName }: Props) {
+export default function MessageCard({ message, onSelect, onUpdate, onEdited, sampleName, locked }: Props) {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.sms);
   const [saving, setSaving] = useState(false);
@@ -152,7 +153,12 @@ export default function MessageCard({ message, onSelect, onUpdate, onEdited, sam
               Selected
             </span>
           )}
-          {!editing && (
+          {locked && (
+            <span className="text-xs font-medium text-zinc-500 bg-zinc-100 border border-zinc-200 px-2.5 py-1 rounded-full">
+              Locked
+            </span>
+          )}
+          {!editing && !locked && (
             <button
               onClick={() => { setEditText(message.sms); setEditing(true); setConfirmMulti(false); }}
               className="text-xs text-zinc-400 hover:text-zinc-700 underline underline-offset-2"

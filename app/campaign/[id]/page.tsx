@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { Campaign, Contact, Message, ActivityLog } from "@/types";
-import { analyzeSMS } from "@/lib/sms";
+import { renderMessage } from "@/lib/sms";
 import CSVImporter from "@/components/CSVImporter";
 import MessageCard from "@/components/MessageCard";
 
@@ -22,6 +22,11 @@ export default function CampaignPage() {
   const [showImporter, setShowImporter] = useState(false);
   const [activityLog, setActivityLog] = useState<ActivityLog[]>([]);
   const [includeOptOut, setIncludeOptOut] = useState(false);
+  const [simName, setSimName] = useState("");
+  const [simCopied, setSimCopied] = useState(false);
+  const [messageLocked, setMessageLocked] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     loadAll();
@@ -94,6 +99,20 @@ export default function CampaignPage() {
     );
   }
 
+  async function handleDelete() {
+    if (!confirm("Delete this campaign and all its contacts, messages, and activity? This cannot be undone.")) return;
+    setDeleting(true);
+    setDeleteError("");
+    const res = await fetch(`/api/campaign/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json();
+      setDeleteError(data.error ?? "Failed to delete campaign.");
+      setDeleting(false);
+      return;
+    }
+    window.location.href = "/dashboard";
+  }
+
   async function handleStatusChange(contactId: string, status: Contact["status"]) {
     const update: Record<string, unknown> = { status };
     // Record the timestamp when a contact is first reached out to.
@@ -116,10 +135,24 @@ export default function CampaignPage() {
   return (
     <div className="max-w-4xl mx-auto px-6 py-10">
       {/* Header */}
-      <div className="mb-8">
-        <a href="/dashboard" className="text-xs text-zinc-400 hover:text-zinc-600">← All campaigns</a>
-        <h1 className="text-xl font-medium text-zinc-900 mt-2">{campaign.name}</h1>
-        <p className="text-sm text-zinc-500 mt-1">{campaign.issue}</p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <a href="/dashboard" className="text-xs text-zinc-400 hover:text-zinc-600">← All campaigns</a>
+          <h1 className="text-xl font-medium text-zinc-900 mt-2">{campaign.name}</h1>
+          <p className="text-sm text-zinc-500 mt-1">{campaign.issue}</p>
+        </div>
+        <div className="flex-shrink-0 mt-1">
+          {deleteError && (
+            <p className="text-xs text-red-600 mb-1">{deleteError}</p>
+          )}
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="text-xs px-3 py-1.5 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+          >
+            {deleting ? "Deleting…" : "Delete campaign"}
+          </button>
+        </div>
       </div>
 
       {/* Stats bar */}
@@ -243,14 +276,39 @@ export default function CampaignPage() {
                 ? "No messages yet. Generate 5 variants with one click."
                 : `${messages.length} variants · ${selectedMessage ? "1 selected" : "none selected"}`}
             </p>
-            <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="px-4 py-2 bg-zinc-900 text-white text-sm rounded-lg hover:bg-zinc-700 disabled:opacity-50"
-            >
-              {generating ? "Generating…" : "Generate 5 variants"}
-            </button>
+            <div className="flex items-center gap-2">
+              {selectedMessage && (
+                <button
+                  onClick={() => setMessageLocked((l) => !l)}
+                  className={`text-sm px-3 py-2 rounded-lg border transition-colors ${messageLocked
+                    ? "bg-zinc-900 text-white border-zinc-900 hover:bg-zinc-700"
+                    : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                    }`}
+                  title={messageLocked ? "Unlock to allow editing" : "Lock selected message before export"}
+                >
+                  {messageLocked ? "🔒 Locked" : "Lock for export"}
+                </button>
+              )}
+              <button
+                onClick={handleGenerate}
+                disabled={generating || messageLocked}
+                className="px-4 py-2 bg-zinc-900 text-white text-sm rounded-lg hover:bg-zinc-700 disabled:opacity-50"
+              >
+                {generating ? "Generating…" : "Generate 5 variants"}
+              </button>
+            </div>
           </div>
+
+          {messageLocked && (
+            <div className="mb-4 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-lg">
+              <p className="text-sm text-zinc-600">
+                Message locked. Go to the <strong>Export</strong> tab to download your CSV.{" "}
+                <button onClick={() => setMessageLocked(false)} className="text-zinc-900 underline underline-offset-2">
+                  Unlock to edit
+                </button>
+              </p>
+            </div>
+          )}
 
           {genError && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2 mb-4">
@@ -267,6 +325,7 @@ export default function CampaignPage() {
                 onUpdate={handleUpdate}
                 onEdited={(_, tone) => logActivity("Edited message", `tone: ${tone}`)}
                 sampleName={contacts[0]?.name}
+                locked={messageLocked}
               />
             ))}
           </div>
@@ -275,24 +334,43 @@ export default function CampaignPage() {
 
       {/* ── Export tab ── */}
       {tab === "export" && (() => {
-        // Pre-flight: compute what the first contact will actually receive.
-        // — Use "there" if name is blank so preview is never "Hi , ..."
-        const firstContact = contacts[0];
-        const previewFirstName = firstContact?.name.split(" ")[0]?.trim() || "there";
-        const baseSms = selectedMessage
-          ? selectedMessage.sms.replace(/\{name\}/gi, previewFirstName)
-          : "";
-        const optOutSuffix = " Reply STOP to opt out.";
-        const withOptOut =
-          includeOptOut && baseSms && !baseSms.toLowerCase().includes("reply stop")
-            ? baseSms + optOutSuffix
-            : baseSms;
-        const baseAnalysis = baseSms ? analyzeSMS(baseSms) : null;
-        const finalAnalysis = withOptOut ? analyzeSMS(withOptOut) : null;
-        const optOutAddsSegment =
-          baseAnalysis && finalAnalysis && finalAnalysis.segments > baseAnalysis.segments;
-        const isReady = !!selectedMessage && finalAnalysis?.segments === 1 && pendingCount > 0;
-        const hasWarning = !!selectedMessage && !!(finalAnalysis && finalAnalysis.segments > 1);
+        // ── Pre-export validation: run renderMessage on ALL pending contacts ──
+        // This is the real segment count — not an estimate from the template.
+        const pendingContacts = contacts.filter((c) => c.status === "pending");
+        const renderedAll = selectedMessage
+          ? pendingContacts.map((c) =>
+            renderMessage({ name: c.name }, selectedMessage.sms, { optOut: includeOptOut })
+          )
+          : [];
+
+        const segmentCounts = renderedAll.map((r) => r.analysis.segments);
+        const uniqueSegments = Array.from(new Set(segmentCounts));
+        const hasSegmentVariance = uniqueSegments.length > 1;
+        const maxSegments = segmentCounts.length > 0 ? Math.max(...segmentCounts) : 0;
+        const twoSegCount = segmentCounts.filter((s) => s > 1).length;
+        const optOutAddsSegmentForAny = renderedAll.some((r) => r.optOutAddsSegment);
+
+        // First-contact preview (consistent with what export route produces)
+        const firstContact = pendingContacts[0] ?? contacts[0];
+        const firstRendered = selectedMessage && firstContact
+          ? renderMessage({ name: firstContact.name }, selectedMessage.sms, { optOut: includeOptOut })
+          : null;
+        const finalAnalysis = firstRendered?.analysis ?? null;
+
+        const isReady = !!selectedMessage && !optOutAddsSegmentForAny && !hasSegmentVariance && pendingContacts.length > 0;
+        const hasWarning = !!selectedMessage && (maxSegments > 1 || optOutAddsSegmentForAny || hasSegmentVariance);
+
+        // ── Test simulation ──────────────────────────────────────────────────
+        const simRendered = selectedMessage && simName.trim()
+          ? renderMessage({ name: simName.trim() }, selectedMessage.sms, { optOut: includeOptOut })
+          : null;
+
+        async function copySimText() {
+          if (!simRendered) return;
+          await navigator.clipboard.writeText(simRendered.text);
+          setSimCopied(true);
+          setTimeout(() => setSimCopied(false), 2000);
+        }
 
         return (
           <div className="space-y-6">
@@ -304,18 +382,17 @@ export default function CampaignPage() {
                   ? "bg-amber-50 border-amber-200"
                   : "bg-emerald-50 border-emerald-200"
               }`}>
-              <span className={`text-lg ${!selectedMessage ? "text-zinc-400" : hasWarning ? "text-amber-500" : "text-emerald-600"
-                }`}>
+              <span className={`text-lg ${!selectedMessage ? "text-zinc-400" : hasWarning ? "text-amber-500" : "text-emerald-600"}`}>
                 {!selectedMessage ? "○" : hasWarning ? "⚠" : "✓"}
               </span>
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
                   <span className="text-sm text-zinc-700">
-                    <strong>{pendingCount}</strong> contacts ready
+                    <strong>{pendingContacts.length}</strong> contacts ready to export
                   </span>
                   {finalAnalysis && (
-                    <span className={`text-sm ${finalAnalysis.segments > 1 ? "text-amber-700 font-medium" : "text-zinc-700"}`}>
-                      <strong>{finalAnalysis.segments}</strong> SMS segment{finalAnalysis.segments > 1 ? "s" : ""} per contact
+                    <span className={`text-sm ${maxSegments > 1 ? "text-amber-700 font-medium" : "text-zinc-700"}`}>
+                      <strong>{maxSegments}</strong> SMS segment{maxSegments !== 1 ? "s" : ""} worst-case
                     </span>
                   )}
                   {finalAnalysis && (
@@ -323,17 +400,42 @@ export default function CampaignPage() {
                   )}
                 </div>
                 {!selectedMessage && <p className="text-xs text-zinc-400 mt-0.5">Select a message variant first.</p>}
-                {hasWarning && <p className="text-xs text-amber-700 mt-0.5">Multi-segment messages cost more to send. Confirm before exporting.</p>}
-                {isReady && <p className="text-xs text-emerald-600 mt-0.5">Safe to export.</p>}
+                {hasWarning && <p className="text-xs text-amber-700 mt-0.5">Review warnings below before exporting.</p>}
+                {isReady && <p className="text-xs text-emerald-600 mt-0.5">Ready — CSV compatible with Twilio, Textedly, and other SMS tools.</p>}
               </div>
             </div>
+
+            {/* ── Opt-out adds segment warning ── */}
+            {optOutAddsSegmentForAny && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4">
+                <p className="text-sm font-medium text-amber-800 mb-1">⚠ Opt-out suffix adds a segment for some contacts</p>
+                <p className="text-sm text-amber-700">
+                  The opt-out line will be appended for all contacts (compliance), but for some contacts it pushes the
+                  message into <strong>2 SMS segments</strong>. Shorten your template message to eliminate this, or proceed
+                  knowing these contacts will cost 2× per SMS.
+                </p>
+              </div>
+            )}
+
+            {/* ── Segment variance warning ── */}
+            {hasSegmentVariance && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4">
+                <p className="text-sm font-medium text-amber-800 mb-1">⚠ Segment count varies across contacts</p>
+                <p className="text-sm text-amber-700">
+                  <strong>{twoSegCount}</strong> of {pendingContacts.length} contacts will receive{" "}
+                  <strong>2 SMS segments</strong> due to name length or Unicode characters.
+                  Worst case: <strong>{maxSegments} SMS per contact</strong>.
+                  Consider removing {"{name}"} from your template if cost consistency matters.
+                </p>
+              </div>
+            )}
 
             {/* Selected message */}
             {selectedMessage ? (
               <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5">
                 <p className="text-sm font-medium text-emerald-800 mb-1">Selected message ({selectedMessage.tone})</p>
                 <p className="text-sm text-emerald-700 font-mono">{selectedMessage.sms}</p>
-                <p className="text-xs text-emerald-600 mt-2">{selectedMessage.sms.length} characters</p>
+                <p className="text-xs text-emerald-600 mt-2">{selectedMessage.sms.length} raw template characters</p>
               </div>
             ) : (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
@@ -343,27 +445,88 @@ export default function CampaignPage() {
               </div>
             )}
 
-            {/* Message preview — what the first contact actually receives */}
-            {selectedMessage && firstContact && (
+            {/* Live preview — what the first contact actually receives */}
+            {selectedMessage && firstContact && firstRendered && (
               <div className="border border-zinc-200 rounded-xl p-5">
-                <h3 className="text-sm font-medium text-zinc-800 mb-3">Message preview</h3>
+                <h3 className="text-sm font-medium text-zinc-800 mb-3">Live preview</h3>
                 <p className="text-xs text-zinc-400 mb-2">
                   What <strong>{firstContact.name || "(blank name)"}</strong> will receive
-                  {!firstContact.name.split(" ")[0].trim() && " — using \"there\" as name fallback"}:
+                  {!firstContact.name?.split(" ")[0]?.trim() && " — using \"there\" as fallback"}:
                 </p>
                 <p className="text-sm font-mono text-zinc-700 bg-zinc-50 rounded-lg px-3 py-2 break-words">
-                  {withOptOut}
+                  {firstRendered.text}
                 </p>
-                {optOutAddsSegment && (
+                <div className="flex flex-wrap gap-3 mt-2">
+                  <span className={`text-xs px-2 py-0.5 rounded border ${firstRendered.analysis.segments === 1
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                    {firstRendered.analysis.segments} segment{firstRendered.analysis.segments !== 1 ? "s" : ""}
+                  </span>
+                  <span className="text-xs px-2 py-0.5 rounded border bg-zinc-50 text-zinc-500 border-zinc-200">
+                    {firstRendered.analysis.encoding}
+                  </span>
+                  <span className="text-xs text-zinc-400">
+                    {firstRendered.analysis.encoding === "GSM"
+                      ? firstRendered.analysis.gsmUnits
+                      : firstRendered.analysis.charCount}/{firstRendered.analysis.maxSingleSegment} units
+                  </span>
+                </div>
+                {firstRendered.optOutAddsSegment && (
                   <p className="text-xs text-amber-700 mt-2">
-                    ⚠ Adding the opt-out line increases this to <strong>2 SMS segments</strong>.
-                    Shorten your message or uncheck the opt-out option to keep it at 1 segment.
+                    ⚠ Opt-out suffix pushed this contact into 2 segments. Shorten your template to fix.
                   </p>
                 )}
-                {finalAnalysis?.encoding === "Unicode" && baseAnalysis?.encoding === "GSM" && (
-                  <p className="text-xs text-amber-700 mt-2">
-                    ⚠ This contact&apos;s name contains non-GSM characters, switching to Unicode encoding with a shorter per-segment limit.
-                  </p>
+              </div>
+            )}
+
+            {/* ── Test simulation ── */}
+            {selectedMessage && (
+              <div className="border border-zinc-200 rounded-xl p-5">
+                <h3 className="text-sm font-medium text-zinc-800 mb-1">Simulate with any name</h3>
+                <p className="text-xs text-zinc-400 mb-3">
+                  Enter any name to preview the exact SMS that recipient will receive — encoding, segments, and all.
+                </p>
+                <input
+                  type="text"
+                  placeholder="e.g. María José"
+                  value={simName}
+                  onChange={(e) => setSimName(e.target.value)}
+                  className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-zinc-900 mb-3"
+                />
+                {simRendered ? (
+                  <div>
+                    <div className="relative">
+                      <p className="text-sm font-mono text-zinc-700 bg-zinc-50 rounded-lg px-3 py-2 pr-20 break-words mb-2">
+                        {simRendered.text}
+                      </p>
+                      <button
+                        onClick={copySimText}
+                        className="absolute top-2 right-2 text-xs px-2 py-1 border border-zinc-200 bg-white rounded hover:bg-zinc-50 transition-colors"
+                      >
+                        {simCopied ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <span className={`text-xs px-2 py-0.5 rounded border ${simRendered.analysis.segments === 1
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                        {simRendered.analysis.segments} segment{simRendered.analysis.segments !== 1 ? "s" : ""}
+                      </span>
+                      <span className="text-xs px-2 py-0.5 rounded border bg-zinc-50 text-zinc-500 border-zinc-200">
+                        {simRendered.analysis.encoding}
+                      </span>
+                      <span className="text-xs text-zinc-400">
+                        {simRendered.analysis.encoding === "GSM"
+                          ? simRendered.analysis.gsmUnits
+                          : simRendered.analysis.charCount} / {simRendered.analysis.maxSingleSegment} units
+                      </span>
+                      {simRendered.optOutAddsSegment && (
+                        <span className="text-xs text-amber-700">⚠ opt-out adds segment</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-400">Enter a name above to see the rendered output.</p>
                 )}
               </div>
             )}
@@ -382,8 +545,8 @@ export default function CampaignPage() {
                 <div>
                   <p className="text-sm text-zinc-800">Append opt-out line</p>
                   <p className="text-xs text-zinc-400">
-                    Adds "Reply STOP to opt out." per contact — only when it fits in the same segment.
-                    Recommended for SMS compliance.
+                    Always appends "Reply STOP to opt out." to every contact&apos;s message.
+                    Recommended for SMS compliance. May add a segment — check warnings above.
                   </p>
                 </div>
               </label>
@@ -391,20 +554,44 @@ export default function CampaignPage() {
               <div className="bg-zinc-50 border border-zinc-100 rounded-lg px-4 py-3">
                 <p className="text-xs text-zinc-500">
                   <strong className="text-zinc-700">Personalisation:</strong> Use{" "}
-                  <code className="bg-zinc-200 px-1 rounded">{"{name}"}</code> in your message and it will be
-                  replaced with each contact&apos;s first name. Contacts with blank names receive &quot;there&quot; as a fallback.
+                  <code className="bg-zinc-200 px-1 rounded">{"{name}"}</code> in your message — replaced with each
+                  contact&apos;s first name. Blank names fall back to &quot;there&quot;.
                 </p>
               </div>
 
+              {/* Export summary */}
+              {selectedMessage && pendingContacts.length > 0 && (
+                <div className="bg-zinc-50 border border-zinc-100 rounded-lg px-4 py-3 space-y-1">
+                  <p className="text-xs font-medium text-zinc-600">This export will contain:</p>
+                  <ul className="text-xs text-zinc-500 space-y-0.5 list-disc list-inside">
+                    <li><strong className="text-zinc-700">{pendingContacts.length}</strong> contacts (pending status)</li>
+                    <li>
+                      Worst-case:{" "}
+                      <strong className={maxSegments > 1 ? "text-amber-700" : "text-zinc-700"}>
+                        {maxSegments} SMS segment{maxSegments !== 1 ? "s" : ""}
+                      </strong>{" "}
+                      · <strong className="text-zinc-700">{finalAnalysis?.encoding}</strong> encoding
+                    </li>
+                    {hasSegmentVariance && (
+                      <li className="text-amber-600">{twoSegCount} contacts will get 2 segments (name variance)</li>
+                    )}
+                    <li>Columns: name, phone, email, tags, status, message_sms, sms_segments, sms_encoding</li>
+                  </ul>
+                  <p className="text-xs text-zinc-400 mt-2 pt-2 border-t border-zinc-200">
+                    CSV is ready for upload to Twilio, Textedly, SimpleTexting, EZTexting, or any SMS platform.
+                  </p>
+                </div>
+              )}
+
               <a
                 href={`/api/contacts/export/${id}${includeOptOut ? "?opt_out=true" : ""}`}
-                onClick={() => logActivity("Exported CSV", `${pendingCount} contacts`)}
+                onClick={() => logActivity("Exported CSV", `${pendingContacts.length} contacts, worst-case ${maxSegments} seg`)}
                 className={`inline-block px-5 py-2.5 text-sm rounded-lg transition-colors ${selectedMessage
                     ? "bg-zinc-900 text-white hover:bg-zinc-700"
                     : "bg-zinc-100 text-zinc-400 cursor-not-allowed pointer-events-none"
                   }`}
               >
-                Download CSV ({pendingCount} contacts)
+                Download CSV ({pendingContacts.length} contacts)
               </a>
             </div>
           </div>
