@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { Message } from "@/types";
 import { analyzeSMS } from "@/lib/sms";
+import { getAuthHeaders } from "@/lib/clientAuth";
 
 interface Props {
   message: Message;
@@ -103,7 +104,7 @@ export default function MessageCard({ message, onSelect, onUpdate, onEdited, sam
     setSaving(true);
     const res = await fetch(`/api/messages/${message.id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: await getAuthHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ sms: editText.trim() }),
     });
     setSaving(false);

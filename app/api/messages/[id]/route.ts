@@ -3,14 +3,19 @@
 // RLS on the messages table ensures users can only edit their own campaign messages.
 
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { analyzeSMS } from "@/lib/sms";
+import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
 
 export async function PATCH(
     req: NextRequest,
     { params }: { params: { id: string } }
 ) {
-    const supabase = createSupabaseServerClient();
+    const { user, db } = await getRouteSupabaseAndUser(req);
+
+    if (!user || !db) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { id } = params;
     const body = await req.json();
     const sms = typeof body?.sms === "string" ? body.sms.trim() : null;
@@ -32,12 +37,15 @@ export async function PATCH(
         );
     }
 
-    const { error } = await supabase
+    const { error } = await db
         .from("messages")
         .update({ sms })
         .eq("id", id);
 
     if (error) {
+        if (error.message.toLowerCase().includes("row-level security")) {
+            return NextResponse.json({ error: "Unauthorized for this message operation." }, { status: 403 });
+        }
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 

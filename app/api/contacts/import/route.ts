@@ -1,10 +1,15 @@
 // app/api/contacts/import/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { applyMapping, ColumnMapping } from "@/lib/csv";
+import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
 
 export async function POST(req: NextRequest) {
-  const supabase = createSupabaseServerClient();
+  const { user, db } = await getRouteSupabaseAndUser(req);
+
+  if (!user || !db) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json();
   const {
     campaign_id,
@@ -36,7 +41,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Detect duplicates against existing contacts in this campaign (by phone).
-  const { data: existing } = await supabase
+  const { data: existing } = await db
     .from("contacts")
     .select("phone")
     .eq("campaign_id", campaign_id);
@@ -69,9 +74,12 @@ export async function POST(req: NextRequest) {
     status: "pending",
   }));
 
-  const { error } = await supabase.from("contacts").insert(rowsToInsert);
+  const { error } = await db.from("contacts").insert(rowsToInsert);
 
   if (error) {
+    if (error.message.toLowerCase().includes("row-level security")) {
+      return NextResponse.json({ error: "Unauthorized for this contacts operation." }, { status: 403 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 

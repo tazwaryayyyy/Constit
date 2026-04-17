@@ -5,6 +5,7 @@
 
 import { useState, useRef } from "react";
 import { parseCSVForMapping, autoDetectMapping, CSVColumn, ColumnMapping, ErrorRow } from "@/lib/csv";
+import { getAuthHeaders } from "@/lib/clientAuth";
 
 interface Props {
   campaignId: string;
@@ -94,7 +95,7 @@ export default function CSVImporter({ campaignId, onImported }: Props) {
 
     const res = await fetch("/api/contacts/import", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await getAuthHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ campaign_id: campaignId, rows: rawRows, mapping, duplicate_strategy: duplicateStrategy }),
     });
 

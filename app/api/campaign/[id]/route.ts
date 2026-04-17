@@ -1,13 +1,17 @@
 // app/api/campaign/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
+import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
 
 export async function DELETE(
-    _req: NextRequest,
+    req: NextRequest,
     { params }: { params: { id: string } }
 ) {
-    const supabase = createSupabaseServerClient();
+    const { user, db } = await getRouteSupabaseAndUser(req);
     const { id } = params;
+
+    if (!user || !db) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     if (!id) {
         return NextResponse.json({ error: "Campaign ID is required" }, { status: 400 });
@@ -17,9 +21,9 @@ export async function DELETE(
     // Order matters if the DB doesn't have ON DELETE CASCADE set up.
     const [{ error: contactsErr }, { error: messagesErr }, { error: logsErr }] =
         await Promise.all([
-            supabase.from("contacts").delete().eq("campaign_id", id),
-            supabase.from("messages").delete().eq("campaign_id", id),
-            supabase.from("activity_log").delete().eq("campaign_id", id),
+            db.from("contacts").delete().eq("campaign_id", id),
+            db.from("messages").delete().eq("campaign_id", id),
+            db.from("activity_log").delete().eq("campaign_id", id),
         ]);
 
     if (contactsErr || messagesErr || logsErr) {
@@ -27,9 +31,12 @@ export async function DELETE(
         return NextResponse.json({ error: `Failed to delete campaign data: ${msg}` }, { status: 500 });
     }
 
-    const { error } = await supabase.from("campaigns").delete().eq("id", id);
+    const { error } = await db.from("campaigns").delete().eq("id", id);
 
     if (error) {
+        if (error.message.toLowerCase().includes("row-level security")) {
+            return NextResponse.json({ error: "Unauthorized for this campaign operation." }, { status: 403 });
+        }
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 

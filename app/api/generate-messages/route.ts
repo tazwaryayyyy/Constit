@@ -1,12 +1,17 @@
 // app/api/generate-messages/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { generateMessages } from "@/lib/ai";
 import { messagePrompt } from "@/lib/prompts";
 import { analyzeSMS } from "@/lib/sms";
+import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
 
 export async function POST(req: NextRequest) {
-  const supabase = createSupabaseServerClient();
+  const { user, db } = await getRouteSupabaseAndUser(req);
+
+  if (!user || !db) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json();
   const { campaign_id, issue, audience, goal } = body;
 
@@ -58,12 +63,15 @@ export async function POST(req: NextRequest) {
     selected: false,
   }));
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from("messages")
     .insert(toInsert)
     .select();
 
   if (error) {
+    if (error.message.toLowerCase().includes("row-level security")) {
+      return NextResponse.json({ error: "Unauthorized for this message operation." }, { status: 403 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 

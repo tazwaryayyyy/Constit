@@ -8,6 +8,7 @@ import { Campaign, Contact, Message, ActivityLog } from "@/types";
 import { renderMessage } from "@/lib/sms";
 import CSVImporter from "@/components/CSVImporter";
 import MessageCard from "@/components/MessageCard";
+import { getAuthHeaders } from "@/lib/clientAuth";
 
 type Tab = "contacts" | "messages" | "export";
 
@@ -63,7 +64,7 @@ export default function CampaignPage() {
 
     const res = await fetch("/api/generate-messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await getAuthHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         campaign_id: id,
         issue: campaign.issue,
@@ -88,7 +89,7 @@ export default function CampaignPage() {
   async function handleSelect(messageId: string) {
     await fetch("/api/messages/select", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await getAuthHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ message_id: messageId, campaign_id: id }),
     });
     setMessages((msgs) =>
@@ -106,7 +107,10 @@ export default function CampaignPage() {
     if (!confirm("Delete this campaign and all its contacts, messages, and activity? This cannot be undone.")) return;
     setDeleting(true);
     setDeleteError("");
-    const res = await fetch(`/api/campaign/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/campaign/${id}`, {
+      method: "DELETE",
+      headers: await getAuthHeaders(),
+    });
     if (!res.ok) {
       const data = await res.json();
       setDeleteError(data.error ?? "Failed to delete campaign.");
