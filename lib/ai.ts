@@ -69,8 +69,8 @@ const BLOCKED_PATTERNS = [
   /\btogether we can\b/i,
   /\bnow more than ever\b/i,
   /\bwe're reaching out about an important issue\b/i,
-  // All-caps words (3+ letters) — hallmark of spam
-  /\b[A-Z]{3,}\b/,
+  // All-caps words (4+ letters) — hallmark of spam. Allow 3-letter acronyms (EPA, SMS, USA, etc.)
+  /\b[A-Z]{4,}\b/,
   // Excessive punctuation
   /[!?]{2,}/,
 ];

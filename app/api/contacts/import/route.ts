@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   if (valid.length === 0) {
     return NextResponse.json(
-      { error: "No importable contacts found. Check that the name column is mapped correctly." },
+      { error: "No importable contacts found. Rows may be missing required fields (name or phone). Download the error report for details." },
       { status: 400 }
     );
   }

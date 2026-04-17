@@ -25,8 +25,15 @@ Every message shows its encoding (GSM or Unicode), exact segment count, and a li
 **5. Edit inline**
 Click Edit on any variant. Type. The Safety Panel updates live. Save — the API validates at the boundary before writing to the DB.
 
-**6. Export a personalized CSV**
-Use `{name}` anywhere in your message and each contact gets their first name in the exported file. Blank names fall back to `"there"` — no `"Hi , we need you."` Opt-out line is appended per contact only when the composed message still fits in one segment.
+**6. Lock and export**
+Lock the selected message before exporting to prevent accidental edits. The Export tab runs `renderMessage` across every pending contact before you download anything — it computes the worst-case segment count, flags contacts where name length or Unicode pushes them into a second segment, and warns separately if the opt-out suffix adds a segment. Only then does the export button appear.
+
+The opt-out line (`Reply STOP to opt out.`) is **always appended** to every contact's message when enabled — it is never silently dropped to save a segment. If it would add a segment for some contacts, a warning tells you to shorten the template instead.
+
+Use `{name}` in your message and each contact gets their first name. Blank names fall back to `"there"`. The exported CSV includes `message_sms`, `sms_segments`, and `sms_encoding` columns so your SMS platform sees the real values.
+
+**7. Simulate before sending**
+Enter any name in the simulator on the Export tab and see the exact text that recipient will receive — correct encoding, correct segment count, copy button included.
 
 ---
 
@@ -57,7 +64,9 @@ constit/
 │   ├── create/page.tsx                   # New campaign form
 │   ├── campaign/[id]/page.tsx            # Core product: contacts / messages / export
 │   └── api/
-│       ├── campaign/create/route.ts      # POST — create campaign
+│       ├── campaign/
+│       │   ├── create/route.ts           # POST — create campaign
+│       │   └── [id]/route.ts             # DELETE — campaign + cascade
 │       ├── contacts/
 │       │   ├── import/route.ts           # POST — CSV import with dup detection
 │       │   └── export/[campaign_id]/     # GET  — personalized CSV download
@@ -174,8 +183,8 @@ The prompt is the competitive moat. Every generation includes:
 ### The safety layer (`lib/ai.ts`)
 
 - Attempt → retry once on failure → contextual fallback (never generic boilerplate)
-- `sanitize()` filters each message: minimum 20 chars, valid tone, no SHAFT/spam patterns
-- SHAFT filter blocks: `FREE`, `WINNER`, `GUARANTEED`, `ACT NOW`, all-caps words, repeated punctuation
+- `sanitize()` filters each message: minimum 20 chars, valid tone, no SHAFT/spam patterns, at least one concrete action verb
+- SHAFT filter blocks: `FREE`, `WINNER`, `GUARANTEED`, `ACT NOW`, all-caps words 4+ letters (3-letter acronyms like EPA, SMS, USA are allowed), repeated punctuation
 - Fallback templates rotate randomly across 3 variants — repeated failures don't look identical
 - Over-limit messages are filtered out, never silently truncated
 

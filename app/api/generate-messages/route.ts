@@ -55,7 +55,6 @@ export async function POST(req: NextRequest) {
     sms: msg.sms,
     call_to_action: msg.call_to_action,
     selected: false,
-    performance_score: null,
   }));
 
   const { data, error } = await supabase

@@ -29,7 +29,14 @@ export async function GET(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const templateSms = message?.sms ?? "";
+  if (!message) {
+    return NextResponse.json(
+      { error: "No message selected for this campaign. Select a message variant before exporting." },
+      { status: 422 }
+    );
+  }
+
+  const templateSms = message.sms;
 
   const headers = ["name", "phone", "email", "tags", "status", "message_sms", "sms_segments", "sms_encoding"];
   const csvRows = [

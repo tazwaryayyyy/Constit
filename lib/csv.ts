@@ -243,27 +243,6 @@ export function autoDetectMapping(columns: CSVColumn[]): ColumnMapping {
   };
 }
 
-
-export interface ParsedRow {
-  name: string;
-  phone: string;
-  email: string;
-  tags: string[];
-  notes: string;
-}
-
-export interface CSVColumn {
-  key: string;       // raw column header from the file
-  sample: string[];  // first 3 non-empty values for the user to see
-}
-
-export interface ParseResult {
-  columns: CSVColumn[];
-  rows: Record<string, string>[];
-  totalRows: number;
-  errors: string[];
-}
-
 // Step 1: Parse CSV and return columns + raw rows for the mapping UI
 export function parseCSVForMapping(csvString: string): ParseResult {
   const result = Papa.parse<Record<string, string>>(csvString, {
