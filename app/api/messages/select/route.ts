@@ -1,8 +1,9 @@
 // app/api/messages/select/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export async function POST(req: NextRequest) {
+  const supabase = createSupabaseServerClient();
   const { message_id, campaign_id } = await req.json();
 
   if (!message_id || !campaign_id) {

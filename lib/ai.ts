@@ -5,10 +5,18 @@
 import OpenAI from "openai";
 
 // Groq is OpenAI-API-compatible — no new package required.
-const client = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY,
-  baseURL: "https://api.groq.com/openai/v1",
-});
+// `OPENAI_API_KEY` fallback is intentional for legacy env setups.
+function getAIClient(): OpenAI {
+  const apiKey = process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing AI API key: set GROQ_API_KEY (preferred) or OPENAI_API_KEY");
+  }
+
+  return new OpenAI({
+    apiKey,
+    baseURL: "https://api.groq.com/openai/v1",
+  });
+}
 
 // llama-3.3-70b-versatile: best Groq model for structured JSON output
 const MODEL = "llama-3.3-70b-versatile";
@@ -120,6 +128,7 @@ function sanitize(raw: unknown): GeneratedMessage | null {
 }
 
 async function callModel(prompt: string): Promise<GeneratedMessage[]> {
+  const client = getAIClient();
   const response = await client.chat.completions.create({
     model: MODEL,
     messages: [{ role: "user", content: prompt }],

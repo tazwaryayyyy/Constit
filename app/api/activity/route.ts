@@ -2,9 +2,10 @@
 // Simple activity log: import, generate, export events per campaign.
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export async function GET(req: NextRequest) {
+    const supabase = createSupabaseServerClient();
     const campaign_id = req.nextUrl.searchParams.get("campaign_id");
     if (!campaign_id) {
         return NextResponse.json({ error: "campaign_id required" }, { status: 400 });
@@ -22,6 +23,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+    const supabase = createSupabaseServerClient();
     const body = await req.json();
     const { campaign_id, event, details } = body as {
         campaign_id: string;

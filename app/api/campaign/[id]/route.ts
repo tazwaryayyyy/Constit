@@ -1,11 +1,12 @@
 // app/api/campaign/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export async function DELETE(
     _req: NextRequest,
     { params }: { params: { id: string } }
 ) {
+    const supabase = createSupabaseServerClient();
     const { id } = params;
 
     if (!id) {

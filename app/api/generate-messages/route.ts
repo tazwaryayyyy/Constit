@@ -1,11 +1,12 @@
 // app/api/generate-messages/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { generateMessages } from "@/lib/ai";
 import { messagePrompt } from "@/lib/prompts";
 import { analyzeSMS } from "@/lib/sms";
 
 export async function POST(req: NextRequest) {
+  const supabase = createSupabaseServerClient();
   const body = await req.json();
   const { campaign_id, issue, audience, goal } = body;
 

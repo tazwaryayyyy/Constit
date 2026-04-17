@@ -1,9 +1,10 @@
 // app/api/contacts/import/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { applyMapping, ColumnMapping } from "@/lib/csv";
 
 export async function POST(req: NextRequest) {
+  const supabase = createSupabaseServerClient();
   const body = await req.json();
   const {
     campaign_id,

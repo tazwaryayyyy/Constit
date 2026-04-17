@@ -1,12 +1,13 @@
 // app/api/contacts/export/[campaign_id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { renderMessage } from "@/lib/sms";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { campaign_id: string } }
 ) {
+  const supabase = createSupabaseServerClient();
   const { campaign_id } = params;
   const includeOptOut = req.nextUrl.searchParams.get("opt_out") === "true";
 

@@ -1,8 +1,9 @@
 // app/api/campaign/create/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export async function POST(req: NextRequest) {
+  const supabase = createSupabaseServerClient();
   const body = await req.json();
   const { name, issue, audience, goal } = body;
 

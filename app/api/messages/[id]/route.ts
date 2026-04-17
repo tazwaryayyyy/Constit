@@ -3,13 +3,14 @@
 // RLS on the messages table ensures users can only edit their own campaign messages.
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { analyzeSMS } from "@/lib/sms";
 
 export async function PATCH(
     req: NextRequest,
     { params }: { params: { id: string } }
 ) {
+    const supabase = createSupabaseServerClient();
     const { id } = params;
     const body = await req.json();
     const sms = typeof body?.sms === "string" ? body.sms.trim() : null;
