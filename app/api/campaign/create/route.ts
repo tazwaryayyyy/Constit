@@ -14,7 +14,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // Prefer cookie session, but also accept explicit bearer token from the client.
+  const authHeader = req.headers.get("authorization") ?? "";
+  const bearerToken = authHeader.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length).trim()
+    : null;
+
+  const { data: { user } } = bearerToken
+    ? await supabase.auth.getUser(bearerToken)
+    : await supabase.auth.getUser();
+
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

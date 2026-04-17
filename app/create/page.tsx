@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 
 export default function CreatePage() {
   const router = useRouter();
@@ -15,9 +16,24 @@ export default function CreatePage() {
     setLoading(true);
     setError("");
 
+    const supabase = getSupabaseClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    if (!token) {
+      setLoading(false);
+      setError("You are not signed in. Open /login and sign in, then try again.");
+      return;
+    }
+
     const res = await fetch("/api/campaign/create", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify(form),
     });
 
