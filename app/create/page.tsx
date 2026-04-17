@@ -25,7 +25,11 @@ export default function CreatePage() {
     setLoading(false);
 
     if (!res.ok) {
-      setError(data.error);
+      if (res.status === 401) {
+        setError("Unauthorized. Please sign in first at /login, then try creating the campaign again.");
+      } else {
+        setError(data.error);
+      }
       return;
     }
 
