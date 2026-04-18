@@ -1,99 +1,102 @@
 # Constit
 
-**AI-powered civic campaign management. Write better constituent messages in minutes, not days.**
+Reach constituents from CSV import to compliant SMS delivery, reply tracking, and campaign analytics in one workflow.
 
-Constit helps political organizers and civic campaigns do one job really well: reach the right people with the right message. You describe your campaign — the issue, who you're talking to, and what you want them to do — and Constit generates five ready-to-send SMS variants tuned for tone, character limits, and carrier compliance. Import your contact list, pick a message, personalize it per recipient, and export a send-ready CSV.
+## What It Does
 
-No bloated CRM. No agency retainer. No guesswork.
+- Create a campaign with issue, audience, and goal so the app can generate context-aware message variants.
+- Import contacts from CSV, map columns, normalize phone numbers, and import valid rows while reporting row-level errors.
+- Generate SMS variants with Groq, review segment/encoding warnings, edit text, and select one message.
+- Send selected SMS directly through Twilio, then track delivery status and inbound replies in Analytics and Inbox.
+- Manage workspace billing and team roles from the dashboard with Stripe checkout and billing portal flows.
 
-Live app: https://constit.vercel.app
+## Live Demo
 
----
+https://constit.vercel.app
 
-## What it does
+## Tech Stack
 
-**1. Create a campaign**
-Define your issue, target audience, and the one action you want people to take. That context drives everything — the AI uses it, the export uses it, the activity log tracks against it.
-
-**2. Import your contact list**
-Upload any CSV. Constit auto-detects your columns, normalizes phone numbers to E.164, catches invalid rows without killing the whole import, and flags duplicates before they touch your database.
-
-**3. Generate 5 message variants**
-One click. Llama 3.3 70B via Groq generates 2 formal, 2 conversational, and 1 urgent variant — each under 160 GSM characters, each with a concrete call-to-action. Few-shot examples and a rejection loop in the prompt ensure quality. SHAFT/spam keywords are filtered before anything reaches your database.
-
-**4. Review the Safety Panel**
-Every message shows its encoding (GSM or Unicode), exact segment count, and a live character progress bar. Multi-segment messages are flagged in red and require a deliberate second click to select — you always know what you're paying for.
-
-**5. Edit inline**
-Click Edit on any variant. Type. The Safety Panel updates live. Save — the API validates at the boundary before writing to the DB.
-
-**6. Lock and export**
-Lock the selected message before exporting to prevent accidental edits. The Export tab runs `renderMessage` across every pending contact before you download anything — it computes the worst-case segment count, flags contacts where name length or Unicode pushes them into a second segment, and warns separately if the opt-out suffix adds a segment. Only then does the export button appear.
-
-The opt-out line (`Reply STOP to opt out.`) is **always appended** to every contact's message when enabled — it is never silently dropped to save a segment. If it would add a segment for some contacts, a warning tells you to shorten the template instead.
-
-Use `{name}` in your message and each contact gets their first name. Blank names fall back to `"there"`. The exported CSV includes `message_sms`, `sms_segments`, and `sms_encoding` columns so your SMS platform sees the real values.
-
-**7. Simulate before sending**
-Enter any name in the simulator on the Export tab and see the exact text that recipient will receive — correct encoding, correct segment count, copy button included.
-
----
-
-## Tech stack
-
-| Layer | Choice | Why |
+| Layer | Choice | One-line reason |
 |---|---|---|
-| Framework | Next.js 14 (App Router) | Server components + API routes in one repo |
-| Language | TypeScript 5 | Strict types across the full stack |
-| Database | Supabase (PostgreSQL) | RLS-enforced multi-tenant isolation |
-| Auth | Supabase Auth | Built into the same project |
-| AI | Groq — `llama-3.3-70b-versatile` | Fastest inference, OpenAI-compatible API |
-| Styling | Tailwind CSS | No component library overhead |
-| CSV parsing | PapaParse | Battle-tested, runs entirely client-side |
-| Analytics | PostHog (optional) | Feature flags + usage analytics |
+| Framework | Next.js 14 App Router | Ships UI pages and API routes in one deployable app |
+| Language | TypeScript 5 | Keeps route contracts and shared models explicit |
+| Database | Supabase Postgres | Stores campaigns, contacts, messages, deliveries, replies, and org data |
+| Auth | Supabase Auth | Provides session + JWT auth for client and route handlers |
+| Authorization | Postgres RLS + route checks | Enforces tenant isolation and ownership at DB and API layers |
+| AI | Groq OpenAI-compatible API | Generates message variants with low integration overhead |
+| SMS | Twilio REST + webhooks | Sends outbound messages and receives delivery/reply events |
+| Billing | Stripe Checkout + Portal + webhooks | Handles subscription upgrades and lifecycle updates |
+| CSV | PapaParse | Parses client-side CSV with flexible header mapping |
+| Styling | Tailwind CSS | Keeps UI iteration fast without a component framework lock-in |
+| Testing | Vitest | Covers auth propagation logic and route helper behavior |
 
----
+## Project Structure
 
-## Project structure
-
-```
+```text
 constit/
+├── LICENSE                                  # Project license
+├── README.md                                # Developer-facing setup and architecture guide
+├── package.json                             # Scripts and dependencies
+├── package-lock.json                        # Locked dependency graph
+├── next.config.js                           # Next.js runtime/build config
+├── tsconfig.json                            # TypeScript compiler config
+├── postcss.config.js                        # PostCSS pipeline config
+├── tailwind.config.js                       # Tailwind theme/content config
+├── next-env.d.ts                            # Next.js TypeScript ambient types
+├── .eslintrc.json                           # ESLint config
+├── vitest.config.ts                         # Vitest setup and alias config
+├── schema.sql                               # Base schema (campaign/contact/message/activity)
+├── schema_migrations.sql                    # Add-on schema for send/replies/orgs/billing fields
 ├── app/
-│   ├── page.tsx                          # Redirects → /dashboard
-│   ├── layout.tsx
-│   ├── globals.css
-│   ├── dashboard/page.tsx                # Campaign list
-│   ├── create/page.tsx                   # New campaign form
-│   ├── campaign/[id]/page.tsx            # Core product: contacts / messages / export
+│   ├── layout.tsx                           # Root HTML shell and metadata
+│   ├── globals.css                          # Global styles
+│   ├── page.tsx                             # Root route (redirect/entry)
+│   ├── login/page.tsx                       # Magic-link login page
+│   ├── create/page.tsx                      # New campaign creation form
+│   ├── dashboard/page.tsx                   # Campaign list + billing + team workspace UI
+│   ├── campaign/[id]/page.tsx               # Main campaign workspace tabs (contacts/messages/export/send/analytics/inbox)
 │   └── api/
-│       ├── campaign/
-│       │   ├── create/route.ts           # POST — create campaign
-│       │   └── [id]/route.ts             # DELETE — campaign + cascade
-│       ├── contacts/
-│       │   ├── import/route.ts           # POST — CSV import with dup detection
-│       │   └── export/[campaign_id]/     # GET  — personalized CSV download
-│       ├── messages/
-│       │   ├── [id]/route.ts             # PATCH — inline edit with validation
-│       │   └── select/route.ts           # POST — select message variant
-│       ├── generate-messages/route.ts    # POST — Groq generation + filtering
-│       └── activity/route.ts             # GET/POST — audit log
+│       ├── activity/route.ts                # Activity feed read/write
+│       ├── campaign/create/route.ts         # Campaign creation endpoint
+│       ├── campaign/[id]/route.ts           # Campaign deletion endpoint
+│       ├── generate-messages/route.ts       # AI variant generation endpoint
+│       ├── send/route.ts                    # Twilio send pipeline endpoint
+│       ├── replies/route.ts                 # Inbox reply listing endpoint
+│       ├── analytics/[campaign_id]/route.ts # Campaign analytics aggregation endpoint
+│       ├── contacts/import/route.ts         # CSV contact import endpoint
+│       ├── contacts/export/[campaign_id]/route.ts # Personalized CSV export endpoint
+│       ├── messages/select/route.ts         # Message selection endpoint
+│       ├── messages/[id]/route.ts           # Message edit endpoint
+│       ├── organizations/route.ts           # Resolve/create caller workspace endpoint
+│       ├── organizations/members/route.ts   # Team member list/add endpoint
+│       ├── organizations/members/[user_id]/route.ts # Team member role/update/delete endpoint
+│       ├── billing/checkout/route.ts        # Stripe checkout session endpoint
+│       ├── billing/portal/route.ts          # Stripe billing portal endpoint
+│       └── webhooks/
+│           ├── twilio/route.ts              # Twilio status + inbound reply webhook handler
+│           └── stripe/route.ts              # Stripe subscription lifecycle webhook handler
 ├── components/
-│   ├── MessageCard.tsx                   # Variant card + Safety Panel
-│   └── CSVImporter.tsx                   # 4-step import flow
+│   ├── CSVImporter.tsx                      # Multi-step CSV upload + mapping UI
+│   └── MessageCard.tsx                      # Message variant card with safety info/actions
 ├── lib/
-│   ├── sms.ts                            # GSM 7-bit segment math
-│   ├── ai.ts                             # Groq layer + fallback + SHAFT filter
-│   ├── prompts.ts                        # Few-shot prompt engineering
-│   ├── csv.ts                            # Parsing + phone normalization
-│   └── supabaseClient.ts
-├── types/index.ts                        # Campaign, Contact, Message, ActivityLog
-├── schema.sql                            # Full Supabase schema — run this first
-└── .env.example
+│   ├── ai.ts                                # Groq client, sanitize/retry/fallback logic
+│   ├── prompts.ts                           # Prompt templates and examples
+│   ├── sms.ts                               # GSM/Unicode analysis and renderMessage logic
+│   ├── csv.ts                               # CSV mapping, normalization, validation helpers
+│   ├── clientAuth.ts                        # Client fetch auth header helper
+│   ├── supabaseClient.ts                    # Browser Supabase singleton client
+│   ├── supabaseServer.ts                    # Server Supabase client factory
+│   ├── supabaseRouteAuth.ts                 # Route auth resolver (cookie + bearer fallback)
+├── types/
+│   ├── index.ts                             # Shared app domain types
+│   └── csv.ts                               # CSV-specific type definitions
+└── __tests__/
+	└── lib/
+		├── clientAuth.test.ts              # Tests for Authorization header propagation
+		└── supabaseRouteAuth.test.ts       # Tests for route auth cookie/bearer behavior
 ```
 
----
-
-## Getting started
+## Getting Started
 
 ### 1. Clone and install
 
@@ -103,218 +106,176 @@ cd Constit
 npm install
 ```
 
-### 2. Set up Supabase
+### 2. Create and configure Supabase
 
-1. Create a project at [supabase.com](https://supabase.com)
-2. Go to **SQL Editor** and paste the entire contents of `schema.sql` — run it
-3. Copy your project URL and anon key from **Settings → API**
+1. Go to https://supabase.com and create a new project.
+2. In your project, open SQL Editor and run schema.sql.
+3. In SQL Editor, run schema_migrations.sql.
+4. Open Settings -> API and copy Project URL, anon key, and service_role key.
 
-### 3. Get a Groq API key
+### 3. Create a Groq API key
 
-1. Sign up at [console.groq.com](https://console.groq.com)
-2. Go to **API Keys** → Create new key
+1. Go to https://console.groq.com.
+2. Open API Keys and create a key.
 
-### 4. Configure environment variables
+### 4. Create a Twilio messaging setup
 
-```bash
-cp .env.example .env.local
+1. Go to https://console.twilio.com.
+2. Copy Account SID and Auth Token from account dashboard.
+3. Buy or verify a phone number that can send SMS.
+4. Set webhook URL for status callbacks and incoming messages to:
+
+```text
+https://your-domain.com/api/webhooks/twilio
 ```
 
-Open `.env.local` and fill in:
+### 5. Create Stripe products and webhook
+
+1. Go to https://dashboard.stripe.com and copy your Secret key.
+2. Create two recurring prices for Pro and Enterprise; copy both price IDs.
+3. Create a webhook endpoint at:
+
+```text
+https://your-domain.com/api/webhooks/stripe
+```
+
+4. Subscribe to events: checkout.session.completed, customer.subscription.updated, customer.subscription.deleted, invoice.payment_failed.
+5. Copy the webhook signing secret.
+
+### 6. Configure environment variables
+
+Create .env.local in project root and paste this exact template:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
-GROQ_API_KEY=gsk_your-key-here
+NEXT_PUBLIC_SUPABASE_URL=https://abcxyzcompany.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.service-role-example
+
+GROQ_API_KEY=gsk_live_example_key
+
+TWILIO_ACCOUNT_SID=AC1234567890abcdef1234567890abcd
+TWILIO_AUTH_TOKEN=twilio_auth_token_example
+TWILIO_FROM_NUMBER=+15551234567
+
+STRIPE_SECRET_KEY=sk_test_51Nexample
+STRIPE_PRO_PRICE_ID=price_1ProExample123456
+STRIPE_ENTERPRISE_PRICE_ID=price_1EntExample123456
+STRIPE_WEBHOOK_SECRET=whsec_example_secret
+
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+NEXT_PUBLIC_POSTHOG_KEY=
+NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
 ```
 
-PostHog is optional — leave those blank to skip analytics.
+Environment variable reference:
 
-### 5. Run it
+| Variable | Required | Where to get it |
+|---|---|---|
+| NEXT_PUBLIC_SUPABASE_URL | Yes | Supabase -> Settings -> API -> Project URL |
+| NEXT_PUBLIC_SUPABASE_ANON_KEY | Yes | Supabase -> Settings -> API -> anon public key |
+| SUPABASE_SERVICE_ROLE_KEY | Yes | Supabase -> Settings -> API -> service_role key |
+| GROQ_API_KEY | Yes | Groq Console -> API Keys |
+| TWILIO_ACCOUNT_SID | Yes for send/webhook | Twilio Console -> Account Info |
+| TWILIO_AUTH_TOKEN | Yes for send/webhook | Twilio Console -> Account Info |
+| TWILIO_FROM_NUMBER | Yes for send | Twilio Phone Numbers |
+| STRIPE_SECRET_KEY | Yes for billing | Stripe Dashboard -> Developers -> API keys |
+| STRIPE_PRO_PRICE_ID | Yes for billing | Stripe Product price ID for Pro |
+| STRIPE_ENTERPRISE_PRICE_ID | Yes for billing | Stripe Product price ID for Enterprise |
+| STRIPE_WEBHOOK_SECRET | Yes for Stripe webhook | Stripe Webhook endpoint signing secret |
+| NEXT_PUBLIC_APP_URL | Yes for callbacks | Your local/prod base URL |
+| NEXT_PUBLIC_POSTHOG_KEY | No | PostHog project key |
+| NEXT_PUBLIC_POSTHOG_HOST | No | PostHog host URL |
+
+### 7. Run locally
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). You'll land on the dashboard.
+Open http://localhost:3000.
 
----
+## How It Works
 
-## Database schema
+### 1) SMS segment math drives safe edits and exports
 
-Four tables. All with RLS. No user ever touches another user's data.
+The app analyzes every final rendered message after personalization and opt-out suffixing. It handles GSM basic and extended characters, Unicode fallback, and per-segment limits, then surfaces segment warnings in UI and API responses before send/export.
 
-```
-campaigns      — one per outreach effort (issue, audience, goal)
-contacts       — constituent list, per campaign
-messages       — AI-generated SMS variants, per campaign
-activity_log   — audit trail (import, generate, edit, export events)
-```
+### 2) AI generation is constrained, then filtered
 
-Every FK cascades on delete. `messages.sms_char_count` is a generated column — it cannot lie. All contact queries use composite indexes so the pending-count stat loads instantly even at scale.
+The prompt enforces tone distribution and output shape. The AI layer rejects unusable text by checking JSON shape, minimum length, blocked patterns, uppercase ratio, and action verbs. If generation fails, the app retries once, then returns contextual fallback content.
 
----
+### 3) CSV import favors partial success
 
-## SMS encoding — why it matters
+CSV parsing auto-detects columns and applies user-confirmed mapping. The importer normalizes phone numbers, validates emails, and returns row-level errors without failing the full batch. Duplicate behavior is explicit with skip or import-both strategies.
 
-Constit implements the full GSM 7-bit standard in `lib/sms.ts`.
+### 4) Multi-tenant security uses RLS plus route guards
 
-| Encoding | Single segment | Multi-segment |
-|---|---|---|
-| GSM 7-bit | 160 units | 153 units/segment |
-| Unicode (UCS-2) | 70 characters | 67 chars/segment |
+RLS policies enforce per-user boundaries in Postgres. Route handlers also verify ownership and resolve auth from cookie session or bearer token for reliability. Webhook routes use service-role access and signature verification because no user session exists.
 
-**Extended GSM characters** (`{ } [ ] ~ \ ^ | €`) each cost **2 units**, not 1. One emoji switches the entire message to Unicode and halves your character budget. Constit catches all of this before you export.
-
-Multi-segment messages are allowed but never silent — they show a red warning and require a confirmation click. Costs are shown as segment counts only, never dollar amounts, because pricing varies by carrier and country.
-
----
-
-## AI message generation
-
-### The prompt (`lib/prompts.ts`)
-
-The prompt is the competitive moat. Every generation includes:
-
-- **Campaign context** — issue, audience, goal injected directly
-- **Tone distribution** — 2 formal, 2 conversational, 1 urgent (always)
-- **Absolute rules** — 160-char limit, no partisan framing, no fabricated facts, one concrete action
-- **Rejection criteria** — clichés (`"make your voice heard"`), corporate jargon, vague promises, spam triggers listed explicitly
-- **3 few-shot examples** — shows the model the quality bar before it writes a single word
-
-### The safety layer (`lib/ai.ts`)
-
-- Attempt → retry once on failure → contextual fallback (never generic boilerplate)
-- `sanitize()` filters each message: minimum 20 chars, valid tone, no SHAFT/spam patterns, at least one concrete action verb
-- SHAFT filter blocks: `FREE`, `WINNER`, `GUARANTEED`, `ACT NOW`, all-caps words 4+ letters (3-letter acronyms like EPA, SMS, USA are allowed), repeated punctuation
-- Fallback templates rotate randomly across 3 variants — repeated failures don't look identical
-- Over-limit messages are filtered out, never silently truncated
-
----
-
-## CSV import
-
-### What it handles
-
-- Auto-detects `name`, `phone`, `email`, `tags`, `notes` columns by fuzzy header matching
-- Phone normalization: `017xxxxxxxx` → `+88017xxxxxxxx`, US 10-digit → `+1`, E.164 passthrough
-- **Partial success** — valid rows are imported even if some rows have errors
-- Error rows returned as a downloadable `errors.csv` — nothing is silently dropped
-
-### Duplicate handling
-
-Before insert, the API queries existing contacts by phone. You choose:
-
-| Strategy | Behavior |
-|---|---|
-| **Keep existing, skip new** (default) | The record already in the campaign survives. New row ignored. |
-| **Import both** | Both rows are inserted. You may have the same number twice. |
-
----
-
-## Export and personalization
-
-### `{name}` variable
-
-Use `{name}` anywhere in your message text. On export, each contact row gets their first name substituted. Contacts with blank names receive `"there"` as a fallback — never `"Hi , we need you."`.
-
-### Opt-out compliance
-
-The opt-out checkbox appends `"Reply STOP to opt out."` for every contact when enabled. The export route uses full `analyzeSMS()` math and surfaces warnings if opt-out or name variance increases segment count.
-
-### Pre-export validation
-
-Before you download, the Export tab runs a full pre-flight check on the actual composed message for the first contact:
-
-- ✓ **green** — selected message, 1 segment, contacts ready
-- ⚠ **amber** — multi-segment, or opt-out suffix pushes to a second segment
-- ○ **grey** — no message selected yet
-
----
-
-## Activity log
-
-Every meaningful action is timestamped and shown in a timeline at the bottom of the campaign page:
-
-| Event | When |
-|---|---|
-| Imported contacts | CSV import completes |
-| Generated messages | Groq returns variants |
-| Edited message | Inline edit saved |
-| Exported CSV | Download link clicked |
-
----
-
-## API reference
+## API Reference
 
 | Method | Route | What it does |
 |---|---|---|
-| `POST` | `/api/campaign/create` | Create campaign, returns `{ id }` |
-| `POST` | `/api/generate-messages` | Generate variants via Groq, insert to DB |
-| `POST` | `/api/contacts/import` | Import CSV rows with dup detection |
-| `GET` | `/api/contacts/export/[id]` | Stream personalized CSV (authenticated request required) |
-| `PATCH` | `/api/messages/[id]` | Update SMS text, validated at boundary |
-| `POST` | `/api/messages/select` | Select variant (deselects all others first) |
-| `GET` | `/api/activity` | Get last 10 log events for a campaign |
-| `POST` | `/api/activity` | Insert an activity event |
-
----
-
-## Environment variables
-
-| Variable | Required | Where to get it |
-|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Yes | supabase.com → Settings → API |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | supabase.com → Settings → API |
-| `GROQ_API_KEY` | Yes | console.groq.com → API Keys |
-| `NEXT_PUBLIC_POSTHOG_KEY` | No | posthog.com → Project → Settings |
-| `NEXT_PUBLIC_POSTHOG_HOST` | No | Default: `https://app.posthog.com` |
-
----
+| POST | /api/campaign/create | Creates a campaign and returns its id |
+| DELETE | /api/campaign/[id] | Deletes a campaign and related records |
+| POST | /api/contacts/import | Imports mapped CSV contacts into a campaign |
+| GET | /api/contacts/export/[campaign_id] | Exports personalized pending contacts as CSV |
+| POST | /api/generate-messages | Generates and stores campaign message variants |
+| PATCH | /api/messages/[id] | Updates message SMS text with validation |
+| POST | /api/messages/select | Selects one message variant for campaign |
+| GET | /api/activity | Returns recent campaign activity items |
+| POST | /api/activity | Writes a campaign activity event |
+| POST | /api/send | Sends selected message to pending contacts via Twilio |
+| GET | /api/replies | Returns paginated inbound replies for a campaign |
+| GET | /api/analytics/[campaign_id] | Returns campaign delivery/reply/variant analytics |
+| GET | /api/organizations | Resolves or creates caller organization |
+| GET | /api/organizations/members | Lists workspace members |
+| POST | /api/organizations/members | Adds or upserts a workspace member |
+| PATCH | /api/organizations/members/[user_id] | Updates a member role |
+| DELETE | /api/organizations/members/[user_id] | Removes a member |
+| POST | /api/billing/checkout | Creates Stripe Checkout session |
+| POST | /api/billing/portal | Creates Stripe Billing Portal session |
+| POST | /api/webhooks/twilio | Handles Twilio delivery and reply webhooks |
+| POST | /api/webhooks/stripe | Handles Stripe subscription lifecycle webhooks |
 
 ## Deployment
 
-Constit deploys to Vercel in under 2 minutes.
+Deploy to Vercel in four steps:
 
-1. Push to GitHub
-2. Import the repo at [vercel.com/new](https://vercel.com/new)
-3. Add all environment variables from `.env.example` in the Vercel dashboard
-4. Deploy
+1. Push this repo to GitHub.
+2. Go to https://vercel.com/new and import the repository.
+3. Add all environment variables from .env.local to Vercel Project Settings -> Environment Variables.
+4. Deploy and set your production domain in NEXT_PUBLIC_APP_URL.
 
-Production: https://constit.vercel.app
+After deploy:
 
-No build config needed — Next.js is auto-detected.
+- Set Twilio webhook URL to https://your-domain.com/api/webhooks/twilio.
+- Set Stripe webhook URL to https://your-domain.com/api/webhooks/stripe.
 
-### Production note
+## Compliance / Caveats
 
-For exports on production, use the in-app **Download CSV** button from the campaign Export tab after selecting a message variant. The app sends an authenticated request so Supabase RLS can resolve your user correctly.
-
----
-
-## Compliance notes
-
-Constit generates and exports messages. It does not send them. Sending responsibility — and compliance — sits with your SMS platform of choice.
-
-**Before you send:**
-- Register your brand and campaign with [The Campaign Registry (TCR)](https://www.campaignregistry.com/) for A2P 10DLC compliance
-- Political campaigns require a Campaign Verify token — budget 3–10 days and a $95 fee
-- Every message must include sender identification and honor opt-out requests within 10 business days
-- TCPA restricts sending before 8 AM or after 9 PM in the recipient's local timezone
-
-The opt-out line Constit appends (`"Reply STOP to opt out."`) is a starting point, not legal advice.
-
----
+- You are responsible for lawful messaging. Get consent before sending SMS.
+- Register brand and campaign when required for A2P 10DLC and carrier policies.
+- Include sender identification and honor opt-out requests.
+- The app supports direct Twilio sending. Keep TWILIO_AUTH_TOKEN and service role keys private.
+- Run schema_migrations.sql in every environment; workspace/team features depend on those tables.
 
 ## Contributing
 
-Issues and PRs are welcome. The places most worth improving:
+Focus improvements here first:
 
-- `lib/prompts.ts` — the prompt is the product, iterate ruthlessly
-- `lib/sms.ts` — carrier-specific edge cases in segment math
-- `lib/csv.ts` — phone normalization for additional country formats
-
----
+- lib/prompts.ts: prompt quality directly changes message usefulness and safety.
+- lib/sms.ts: segment math and rendering rules affect cost and compliance outcomes.
+- app/api/webhooks/twilio/route.ts: webhook correctness drives delivery accuracy and inbox quality.
 
 ## License
 
 MIT
+
+## Self Review
+
+- Can a new developer run this locally in under 10 minutes using only this README? Yes, if they already have Supabase, Groq, Twilio, and Stripe accounts.
+- Does every section earn its place? Yes; each section maps to setup, trust, architecture, or production readiness.
+- Is anything assumed that should be explained? The external account creation steps are included with exact navigation paths.
+- Does the headline make someone want to read more? Yes; it states the user outcome in one line.

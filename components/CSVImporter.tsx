@@ -15,6 +15,7 @@ interface Props {
 type Step = "upload" | "mapping" | "importing" | "summary";
 
 type MappingField = keyof ColumnMapping;
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 const MAPPING_FIELDS: { key: MappingField; label: string; description: string }[] = [
   { key: "fullName", label: "Full name column", description: "e.g. 'Name', 'Voter Name', 'Full Name'" },
@@ -66,6 +67,15 @@ export default function CSVImporter({ campaignId, onImported }: Props) {
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setParseErrors([
+        `File is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max supported size is 10MB.`,
+      ]);
+      setStep("upload");
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
@@ -128,6 +138,7 @@ export default function CSVImporter({ campaignId, onImported }: Props) {
         Upload a CSV export of your contact list.<br />
         Any column format works — you&apos;ll map them in the next step.
       </p>
+      <p className="text-xs text-zinc-400 mb-3">Max file size: 10MB</p>
       <input
         ref={fileRef}
         type="file"

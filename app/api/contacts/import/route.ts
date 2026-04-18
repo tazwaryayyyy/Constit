@@ -3,7 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { applyMapping, ColumnMapping } from "@/lib/csv";
 import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
 
+const MAX_IMPORT_ROWS = 50_000;
+
 export async function POST(req: NextRequest) {
+  const correlationId = req.headers.get("x-request-id") ?? crypto.randomUUID();
   const { user, db } = await getRouteSupabaseAndUser(req);
 
   if (!user || !db) {
@@ -28,6 +31,26 @@ export async function POST(req: NextRequest) {
       { error: "campaign_id, rows, and mapping are required" },
       { status: 400 }
     );
+  }
+
+  // ── Size limit: prevent DOS via massive imports ──────────────────────────
+  if (rows.length > MAX_IMPORT_ROWS) {
+    return NextResponse.json(
+      { error: `Import limited to ${MAX_IMPORT_ROWS.toLocaleString()} rows per batch` },
+      { status: 413 }
+    );
+  }
+
+  // ── Ownership check: campaign must belong to this user ───────────────────
+  const { data: campaign, error: campError } = await db
+    .from("campaigns")
+    .select("id")
+    .eq("id", campaign_id)
+    .single();
+
+  if (campError || !campaign) {
+    console.warn(`[contacts/import] [${correlationId}] campaign ${campaign_id} not found for user ${user.id}`);
+    return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
   }
 
   // Apply user-confirmed mapping — returns valid rows and error rows.
@@ -77,17 +100,21 @@ export async function POST(req: NextRequest) {
   const { error } = await db.from("contacts").insert(rowsToInsert);
 
   if (error) {
+    console.error(`[contacts/import] [${correlationId}] DB insert error:`, error.message);
     if (error.message.toLowerCase().includes("row-level security")) {
       return NextResponse.json({ error: "Unauthorized for this contacts operation." }, { status: 403 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Failed to import contacts" }, { status: 500 });
   }
 
-  return NextResponse.json({
-    imported: toInsert.length,
-    skipped: duplicate_strategy === "skip" ? duplicates.length : 0,
-    duplicateCount: duplicates.length,
-    errors,
-  });
+  return NextResponse.json(
+    {
+      imported: toInsert.length,
+      skipped: duplicate_strategy === "skip" ? duplicates.length : 0,
+      duplicateCount: duplicates.length,
+      errors,
+    },
+    { headers: { "x-request-id": correlationId } }
+  );
 }
 

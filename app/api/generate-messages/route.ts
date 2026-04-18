@@ -5,11 +5,39 @@ import { messagePrompt } from "@/lib/prompts";
 import { analyzeSMS } from "@/lib/sms";
 import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
 
+// In-memory rate limiter: per-user, max 10 calls per 60 seconds
+// In production, replace with Redis (Upstash) for multi-instance correctness.
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT = 10;
+const RATE_WINDOW_MS = 60_000;
+
+function checkRateLimit(userId: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(userId);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(userId, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= RATE_LIMIT) return false;
+  entry.count++;
+  return true;
+}
+
 export async function POST(req: NextRequest) {
+  const correlationId = req.headers.get("x-request-id") ?? crypto.randomUUID();
   const { user, db } = await getRouteSupabaseAndUser(req);
 
   if (!user || !db) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // -- Rate limit: prevent Groq API abuse ----------------------------------
+  if (!checkRateLimit(user.id)) {
+    console.warn(`[generate-messages] [${correlationId}] Rate limit hit for user ${user.id}`);
+    return NextResponse.json(
+      { error: "Too many requests. Wait 60 seconds before generating again." },
+      { status: 429, headers: { "Retry-After": "60", "x-request-id": correlationId } }
+    );
   }
 
   const body = await req.json();
@@ -22,10 +50,33 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // -- Ownership check: campaign must belong to this user -----------------
+  const { data: campaign, error: campError } = await db
+    .from("campaigns")
+    .select("id")
+    .eq("id", campaign_id)
+    .single();
+
+  if (campError || !campaign) {
+    console.warn(`[generate-messages] [${correlationId}] campaign ${campaign_id} not found for user ${user.id}`);
+    return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
+  }
+
+  // Input length guards before sending to AI
+  if (typeof issue !== "string" || issue.length > 500) {
+    return NextResponse.json({ error: "issue must be under 500 characters" }, { status: 400 });
+  }
+  if (typeof audience !== "string" || audience.length > 500) {
+    return NextResponse.json({ error: "audience must be under 500 characters" }, { status: 400 });
+  }
+  if (typeof goal !== "string" || goal.length > 500) {
+    return NextResponse.json({ error: "goal must be under 500 characters" }, { status: 400 });
+  }
+
   const prompt = messagePrompt(issue, audience, goal);
   const { messages, usedFallback } = await generateMessages(prompt, { issue, goal });
 
-  // Filter out messages that exceed the single-segment limit — do NOT silently truncate.
+  // Filter out messages that exceed the single-segment limit - do NOT silently truncate.
   // Users must see the real text or edit it; truncation hides bugs and destroys meaning.
   const withinLimit = messages.filter((msg) => {
     const analysis = analyzeSMS(msg.sms);
@@ -39,7 +90,7 @@ export async function POST(req: NextRequest) {
 
   if (overLimit.length > 0) {
     console.warn(
-      `[Constit] ${overLimit.length} message(s) exceeded SMS limit and were excluded from insert. ` +
+      `[generate-messages] [${correlationId}] ${overLimit.length} message(s) exceeded SMS limit. ` +
       `Tones: ${overLimit.map((m) => m.tone).join(", ")}`
     );
   }
@@ -69,16 +120,15 @@ export async function POST(req: NextRequest) {
     .select();
 
   if (error) {
+    console.error(`[generate-messages] [${correlationId}] DB insert error:`, error.message);
     if (error.message.toLowerCase().includes("row-level security")) {
       return NextResponse.json({ error: "Unauthorized for this message operation." }, { status: 403 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Failed to save generated messages" }, { status: 500 });
   }
 
-  return NextResponse.json({
-    messages: data,
-    usedFallback,
-    overLimitCount: overLimit.length,
-  });
+  return NextResponse.json(
+    { messages: data, usedFallback, overLimitCount: overLimit.length },
+    { headers: { "x-request-id": correlationId } }
+  );
 }
-

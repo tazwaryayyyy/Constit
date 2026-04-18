@@ -10,6 +10,7 @@ export async function PATCH(
     req: NextRequest,
     { params }: { params: { id: string } }
 ) {
+    const correlationId = req.headers.get("x-request-id") ?? crypto.randomUUID();
     const { user, db } = await getRouteSupabaseAndUser(req);
 
     if (!user || !db) {
@@ -22,6 +23,21 @@ export async function PATCH(
 
     if (!sms) {
         return NextResponse.json({ error: "sms is required" }, { status: 400 });
+    }
+    if (sms.length < 10) {
+        return NextResponse.json({ error: "SMS must be at least 10 characters" }, { status: 400 });
+    }
+
+    // ── Ownership check: verify message exists before updating ─────────────
+    const { data: existing, error: lookupError } = await db
+        .from("messages")
+        .select("id, campaign_id")
+        .eq("id", id)
+        .single();
+
+    if (lookupError || !existing) {
+        console.warn(`[messages PATCH] [${correlationId}] message ${id} not found for user ${user.id}`);
+        return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
 
     // Validate at the API boundary — don't silently accept over-limit messages.
@@ -43,11 +59,12 @@ export async function PATCH(
         .eq("id", id);
 
     if (error) {
+        console.error(`[messages PATCH] [${correlationId}] DB error:`, error.message);
         if (error.message.toLowerCase().includes("row-level security")) {
             return NextResponse.json({ error: "Unauthorized for this message operation." }, { status: 403 });
         }
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: "Failed to update message" }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true }, { headers: { "x-request-id": correlationId } });
 }
