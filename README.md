@@ -272,10 +272,3 @@ Focus improvements here first:
 ## License
 
 MIT
-
-## Self Review
-
-- Can a new developer run this locally in under 10 minutes using only this README? Yes, if they already have Supabase, Groq, Twilio, and Stripe accounts.
-- Does every section earn its place? Yes; each section maps to setup, trust, architecture, or production readiness.
-- Is anything assumed that should be explained? The external account creation steps are included with exact navigation paths.
-- Does the headline make someone want to read more? Yes; it states the user outcome in one line.
