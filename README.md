@@ -45,6 +45,7 @@ constit/
 ├── next-env.d.ts                            # Next.js TypeScript ambient types
 ├── .eslintrc.json                           # ESLint config
 ├── vitest.config.ts                         # Vitest setup and alias config
+├── vercel.json                              # Vercel cron schedule config
 ├── schema.sql                               # Base schema (campaign/contact/message/activity)
 ├── schema_migrations.sql                    # Add-on schema for send/replies/orgs/billing fields
 ├── app/
@@ -72,12 +73,22 @@ constit/
 │       ├── organizations/members/[user_id]/route.ts # Team member role/update/delete endpoint
 │       ├── billing/checkout/route.ts        # Stripe checkout session endpoint
 │       ├── billing/portal/route.ts          # Stripe billing portal endpoint
+│       ├── cron/
+│       │   └── retry-webhooks/route.ts      # Hourly DLQ retry cron (MAX_RETRIES=3, 24h window)
 │       └── webhooks/
 │           ├── twilio/route.ts              # Twilio status + inbound reply webhook handler
 │           └── stripe/route.ts              # Stripe subscription lifecycle webhook handler
 ├── components/
 │   ├── CSVImporter.tsx                      # Multi-step CSV upload + mapping UI
-│   └── MessageCard.tsx                      # Message variant card with safety info/actions
+│   ├── MessageCard.tsx                      # Message variant card with safety info/actions
+│   └── campaign/
+│       ├── CampaignAnalytics.tsx            # Analytics tab charts and delivery stats
+│       ├── CampaignHeader.tsx               # Campaign title, status, and action bar
+│       ├── ContactList.tsx                  # Contact table with pagination and filters
+│       ├── ExportTab.tsx                    # Personalized CSV export UI
+│       ├── InboxTab.tsx                     # Inbound reply inbox UI
+│       ├── MessageGenerator.tsx             # AI message generation and selection UI
+│       └── SendTab.tsx                      # Send pipeline UI with progress feedback
 ├── lib/
 │   ├── ai.ts                                # Groq client, sanitize/retry/fallback logic
 │   ├── prompts.ts                           # Prompt templates and examples
@@ -87,12 +98,18 @@ constit/
 │   ├── supabaseClient.ts                    # Browser Supabase singleton client
 │   ├── supabaseServer.ts                    # Server Supabase client factory
 │   ├── supabaseRouteAuth.ts                 # Route auth resolver (cookie + bearer fallback)
+│   ├── logger.ts                            # Pino structured JSON logger singleton
+│   └── rateLimit.ts                         # Upstash Redis rate-limit helper
 ├── types/
 │   ├── index.ts                             # Shared app domain types
 │   └── csv.ts                               # CSV-specific type definitions
 └── __tests__/
+	├── api/
+	│   └── contacts-import.test.ts         # Tests for atomic quota / claim_contact_quota pattern
 	└── lib/
+		├── ai.test.ts                      # Tests for AI generation, sanitization, and fallback
 		├── clientAuth.test.ts              # Tests for Authorization header propagation
+		├── sms.test.ts                     # Tests for GSM/Unicode segment math and rendering
 		└── supabaseRouteAuth.test.ts       # Tests for route auth cookie/bearer behavior
 ```
 
@@ -166,6 +183,8 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 NEXT_PUBLIC_POSTHOG_KEY=
 NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
+
+CRON_SECRET=your_random_secret_here
 ```
 
 Environment variable reference:
@@ -186,6 +205,7 @@ Environment variable reference:
 | NEXT_PUBLIC_APP_URL | Yes for callbacks | Your local/prod base URL |
 | NEXT_PUBLIC_POSTHOG_KEY | No | PostHog project key |
 | NEXT_PUBLIC_POSTHOG_HOST | No | PostHog host URL |
+| CRON_SECRET | Yes for cron | Any random secret; Vercel sets it automatically on cron requests |
 
 ### 7. Run locally
 
@@ -238,6 +258,7 @@ RLS policies enforce per-user boundaries in Postgres. Route handlers also verify
 | POST | /api/billing/portal | Creates Stripe Billing Portal session |
 | POST | /api/webhooks/twilio | Handles Twilio delivery and reply webhooks |
 | POST | /api/webhooks/stripe | Handles Stripe subscription lifecycle webhooks |
+| GET | /api/cron/retry-webhooks | Retries failed webhook events (called by Vercel cron hourly) |
 
 ## Deployment
 
