@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
 import { renderMessage } from "@/lib/sms";
+import { smsRateLimit } from "@/lib/rateLimit";
+import { logger } from "@/lib/logger";
 
 const MAX_CONTACTS_PER_SEND = 10_000;
 
@@ -58,6 +60,17 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // ── FIX #2: Upstash Redis rate limit for SMS sends ────────────────────
+    const { success, reset } = await smsRateLimit.limit(user.id);
+    if (!success) {
+        const retryAfter = Math.ceil((reset - Date.now()) / 1000);
+        logger.warn({ correlationId, userId: user.id }, "send: SMS rate limit exceeded");
+        return NextResponse.json(
+            { error: "Too many send requests. Please wait before sending again." },
+            { status: 429, headers: { "Retry-After": String(retryAfter), "x-request-id": correlationId } }
+        );
+    }
+
     const body = await req.json();
     const { campaign_id, include_opt_out = true } = body as {
         campaign_id: string;
@@ -104,7 +117,7 @@ export async function POST(req: NextRequest) {
         .limit(MAX_CONTACTS_PER_SEND);
 
     if (contactsError) {
-        console.error(`[send] [${correlationId}] contacts fetch error:`, contactsError.message);
+        logger.error({ err: contactsError, correlationId, campaignId: campaign_id }, "send: contacts fetch failed");
         return NextResponse.json({ error: "Failed to load contacts" }, { status: 500 });
     }
 
@@ -159,7 +172,7 @@ export async function POST(req: NextRequest) {
         .select("id, contact_id");
 
     if (deliveriesError) {
-        console.error(`[send] [${correlationId}] delivery insert error:`, deliveriesError.message);
+        logger.error({ err: deliveriesError, correlationId, campaignId: campaign_id }, "send: delivery records insert failed");
         return NextResponse.json({ error: "Failed to create delivery records" }, { status: 500 });
     }
 
@@ -200,7 +213,7 @@ export async function POST(req: NextRequest) {
                             .eq("id", deliveryId);
                     }
 
-                    console.warn(`[send] [${correlationId}] failed to send to ${contact.phone}: ${result.error}`);
+                    logger.warn({ correlationId, phone: contact.phone, error: result.error }, "send: Twilio send failed for contact");
                 } else {
                     results.queued++;
 

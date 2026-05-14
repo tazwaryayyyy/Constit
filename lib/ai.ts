@@ -3,6 +3,7 @@
 // To switch providers: update baseURL, API key env var, and MODEL below.
 
 import OpenAI from "openai";
+import { logger } from "@/lib/logger";
 
 // Groq is OpenAI-API-compatible — no new package required.
 // `OPENAI_API_KEY` fallback is intentional for legacy env setups.
@@ -81,7 +82,8 @@ const BLOCKED_PATTERNS = [
   /[!?]{2,}/,
 ];
 
-function sanitize(raw: unknown): GeneratedMessage | null {
+// Exported for unit testing of the domain spam/safety filter logic.
+export function sanitize(raw: unknown): GeneratedMessage | null {
   if (!raw || typeof raw !== "object") return null;
   const msg = raw as Record<string, unknown>;
 
@@ -99,7 +101,7 @@ function sanitize(raw: unknown): GeneratedMessage | null {
   // SHAFT / spam pattern check — reject rather than silently pass bad messages
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(sms)) {
-      console.warn(`[Constit] sanitize: rejected message matching pattern ${pattern} — "${sms.slice(0, 60)}"`);
+      logger.warn({ pattern: String(pattern), preview: sms.slice(0, 60) }, "ai.sanitize: rejected — matched blocked pattern");
       return null;
     }
   }
@@ -111,7 +113,7 @@ function sanitize(raw: unknown): GeneratedMessage | null {
   const letters = sms.match(/[a-zA-Z]/g) ?? [];
   const upperLetters = sms.match(/[A-Z]/g) ?? [];
   if (letters.length > 10 && upperLetters.length / letters.length > 0.5) {
-    console.warn(`[Constit] sanitize: rejected message — ${Math.round(upperLetters.length / letters.length * 100)}% uppercase — "${sms.slice(0, 60)}"`);
+    logger.warn({ uppercasePct: Math.round(upperLetters.length / letters.length * 100), preview: sms.slice(0, 60) }, "ai.sanitize: rejected — excessive uppercase");
     return null;
   }
 
@@ -119,7 +121,7 @@ function sanitize(raw: unknown): GeneratedMessage | null {
   // patterns above but is still worthless without an actual ask.
   const ACTION_VERBS = /\b(call|visit|sign|attend|contact|vote|register|join|support|share|send|submit|respond|reply|check|read|learn|find|take|go|come|ask|tell|meet|write|request|review|confirm|complete|fill|download|access|help|join|donate|pledge|petition|notify|report|raise|urge|push|demand|speak|stand|act|show)\b/i;
   if (!ACTION_VERBS.test(sms)) {
-    console.warn(`[Constit] sanitize: rejected message — no action verb found — "${sms.slice(0, 60)}"`);
+    logger.warn({ preview: sms.slice(0, 60) }, "ai.sanitize: rejected — no action verb found");
     return null;
   }
 
@@ -165,21 +167,21 @@ export async function generateMessages(
   try {
     messages = await callModel(prompt);
   } catch (err) {
-    console.warn("[Constit] Generation attempt 1 failed:", (err as Error).message);
+    logger.warn({ err }, "ai.generateMessages: attempt 1 failed");
   }
 
   // Retry if fewer than 3 valid messages came back
   if (messages.length < 3) {
-    console.warn(`[Constit] Only ${messages.length} valid messages — retrying`);
+    logger.warn({ count: messages.length }, "ai.generateMessages: insufficient valid messages — retrying");
     try {
       messages = await callModel(prompt);
     } catch (err) {
-      console.warn("[Constit] Retry failed:", (err as Error).message);
+      logger.warn({ err }, "ai.generateMessages: retry attempt failed");
     }
   }
 
   if (messages.length === 0) {
-    console.error("[Constit] All generation attempts failed — using contextual fallback");
+    logger.error({}, "ai.generateMessages: all generation attempts failed — using contextual fallback");
     return {
       messages: buildFallback(fallbackContext?.issue, fallbackContext?.goal),
       usedFallback: true,

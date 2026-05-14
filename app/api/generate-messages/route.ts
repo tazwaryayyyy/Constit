@@ -4,24 +4,8 @@ import { generateMessages } from "@/lib/ai";
 import { messagePrompt } from "@/lib/prompts";
 import { analyzeSMS } from "@/lib/sms";
 import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
-
-// In-memory rate limiter: per-user, max 10 calls per 60 seconds
-// In production, replace with Redis (Upstash) for multi-instance correctness.
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT = 10;
-const RATE_WINDOW_MS = 60_000;
-
-function checkRateLimit(userId: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(userId);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(userId, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT) return false;
-  entry.count++;
-  return true;
-}
+import { aiRateLimit } from "@/lib/rateLimit";
+import { logger } from "@/lib/logger";
 
 export async function POST(req: NextRequest) {
   const correlationId = req.headers.get("x-request-id") ?? crypto.randomUUID();
@@ -31,12 +15,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // -- Rate limit: prevent Groq API abuse ----------------------------------
-  if (!checkRateLimit(user.id)) {
-    console.warn(`[generate-messages] [${correlationId}] Rate limit hit for user ${user.id}`);
+  // ── FIX #2: Upstash Redis sliding-window rate limit ───────────────────────
+  // Replaces the in-memory map that reset on every Vercel cold start.
+  const { success, reset } = await aiRateLimit.limit(user.id);
+  if (!success) {
+    const retryAfter = Math.ceil((reset - Date.now()) / 1000);
+    logger.warn({ correlationId, userId: user.id }, "generate-messages: rate limit exceeded");
     return NextResponse.json(
-      { error: "Too many requests. Wait 60 seconds before generating again." },
-      { status: 429, headers: { "Retry-After": "60", "x-request-id": correlationId } }
+      { error: "Too many requests. Wait before generating again." },
+      { status: 429, headers: { "Retry-After": String(retryAfter), "x-request-id": correlationId } }
     );
   }
 
@@ -58,7 +45,7 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (campError || !campaign) {
-    console.warn(`[generate-messages] [${correlationId}] campaign ${campaign_id} not found for user ${user.id}`);
+    logger.warn({ correlationId, campaignId: campaign_id, userId: user.id }, "generate-messages: campaign not found");
     return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
   }
 
@@ -76,26 +63,17 @@ export async function POST(req: NextRequest) {
   const prompt = messagePrompt(issue, audience, goal);
   const { messages, usedFallback } = await generateMessages(prompt, { issue, goal });
 
-  // Filter out messages that exceed the single-segment limit - do NOT silently truncate.
-  // Users must see the real text or edit it; truncation hides bugs and destroys meaning.
-  const withinLimit = messages.filter((msg) => {
-    const analysis = analyzeSMS(msg.sms);
-    return !analysis.isOverSingleSegment;
-  });
-
-  const overLimit = messages.filter((msg) => {
-    const analysis = analyzeSMS(msg.sms);
-    return analysis.isOverSingleSegment;
-  });
+  // Filter out messages that exceed the single-segment limit.
+  const withinLimit = messages.filter((msg) => !analyzeSMS(msg.sms).isOverSingleSegment);
+  const overLimit = messages.filter((msg) => analyzeSMS(msg.sms).isOverSingleSegment);
 
   if (overLimit.length > 0) {
-    console.warn(
-      `[generate-messages] [${correlationId}] ${overLimit.length} message(s) exceeded SMS limit. ` +
-      `Tones: ${overLimit.map((m) => m.tone).join(", ")}`
+    logger.warn(
+      { correlationId, overLimitCount: overLimit.length, tones: overLimit.map((m) => m.tone) },
+      "generate-messages: messages filtered for exceeding SMS segment limit"
     );
   }
 
-  // If no valid messages survived filtering, surface a clear error.
   if (withinLimit.length === 0 && !usedFallback) {
     return NextResponse.json(
       {
@@ -120,7 +98,7 @@ export async function POST(req: NextRequest) {
     .select();
 
   if (error) {
-    console.error(`[generate-messages] [${correlationId}] DB insert error:`, error.message);
+    logger.error({ err: error, correlationId, campaignId: campaign_id }, "generate-messages: DB insert failed");
     if (error.message.toLowerCase().includes("row-level security")) {
       return NextResponse.json({ error: "Unauthorized for this message operation." }, { status: 403 });
     }

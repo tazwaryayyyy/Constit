@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { applyMapping, ColumnMapping } from "@/lib/csv";
 import { getRouteSupabaseAndUser } from "@/lib/supabaseRouteAuth";
+import { logger } from "@/lib/logger";
 
 const MAX_IMPORT_ROWS = 50_000;
 
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (campError || !campaign) {
-    console.warn(`[contacts/import] [${correlationId}] campaign ${campaign_id} not found for user ${user.id}`);
+    logger.warn({ correlationId, campaignId: campaign_id, userId: user.id }, "contacts/import: campaign not found");
     return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
   }
 
@@ -87,6 +88,47 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ── FIX #1 (atomic): Enforce plan contact limit ──────────────────────────
+  // claim_contact_quota (Migration 11) uses SELECT ... FOR UPDATE so concurrent
+  // imports on the same org row serialize at the Postgres lock, eliminating the
+  // race condition where two simultaneous calls could both pass a Node.js check.
+  // Returns: { allowed, [used, limit, requested], [reason:"no_org"] }
+  const { data: quotaResult, error: quotaError } = await db.rpc("claim_contact_quota", {
+    p_owner_id: user.id,
+    p_delta: toInsert.length,
+  });
+
+  if (quotaError) {
+    logger.error({ err: quotaError, correlationId, userId: user.id }, "contacts/import: quota RPC failed");
+    return NextResponse.json({ error: "Failed to verify plan limits" }, { status: 500 });
+  }
+
+  const quota = quotaResult as {
+    allowed: boolean;
+    used?: number;
+    limit?: number;
+    requested?: number;
+    reason?: string;
+  };
+
+  if (!quota.allowed) {
+    const { used, limit, requested } = quota;
+    logger.warn(
+      { correlationId, userId: user.id, used, limit, requested },
+      "contacts/import: plan limit would be exceeded"
+    );
+    return NextResponse.json(
+      {
+        error: `Plan limit reached. Your plan allows ${(limit ?? 0).toLocaleString()} contacts per month. You have used ${(used ?? 0).toLocaleString()} and are trying to import ${(requested ?? toInsert.length).toLocaleString()} more. Upgrade your plan to continue.`,
+        used,
+        limit,
+        requested,
+      },
+      { status: 402 }
+    );
+  }
+
+  // ── Insert contacts ───────────────────────────────────────────────────────
   const rowsToInsert = toInsert.map((c) => ({
     campaign_id,
     name: c.name,
@@ -97,11 +139,16 @@ export async function POST(req: NextRequest) {
     status: "pending",
   }));
 
-  const { error } = await db.from("contacts").insert(rowsToInsert);
+  const { error: insertError } = await db.from("contacts").insert(rowsToInsert);
 
-  if (error) {
-    console.error(`[contacts/import] [${correlationId}] DB insert error:`, error.message);
-    if (error.message.toLowerCase().includes("row-level security")) {
+  if (insertError) {
+    // Insert failed — compensate by releasing the quota that claim_contact_quota
+    // already incremented. release_contact_quota caps at 0 to prevent negatives.
+    if (quota.reason !== "no_org") {
+      await db.rpc("release_contact_quota", { p_owner_id: user.id, p_delta: toInsert.length });
+    }
+    logger.error({ err: insertError, correlationId, campaignId: campaign_id }, "contacts/import: DB insert failed");
+    if (insertError.message.toLowerCase().includes("row-level security")) {
       return NextResponse.json({ error: "Unauthorized for this contacts operation." }, { status: 403 });
     }
     return NextResponse.json({ error: "Failed to import contacts" }, { status: 500 });
@@ -117,4 +164,3 @@ export async function POST(req: NextRequest) {
     { headers: { "x-request-id": correlationId } }
   );
 }
-

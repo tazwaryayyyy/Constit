@@ -7,9 +7,14 @@
 //   customer.subscription.updated → plan change
 //   customer.subscription.deleted → downgrade to free
 //   invoice.payment_failed        → mark past_due
+//
+// FIX #3: Every event is persisted to webhook_events before processing.
+// UNIQUE(provider, event_id) prevents double-processing on Stripe retries.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { waitUntil } from "@vercel/functions";
+import { logger } from "@/lib/logger";
 
 function getServiceDb() {
     return createClient(
@@ -52,31 +57,31 @@ async function validateStripeSignature(
     return computed === v1;
 }
 
-export async function POST(req: NextRequest) {
-    const correlationId = req.headers.get("x-request-id") ?? crypto.randomUUID();
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+// ── Shared types ──────────────────────────────────────────────────────────────
+export type StripeEvent = {
+    id: string;
+    type: string;
+    data: { object: Record<string, unknown> };
+};
 
-    if (!webhookSecret) {
-        console.error(`[webhooks/stripe] [${correlationId}] STRIPE_WEBHOOK_SECRET not configured`);
-        return NextResponse.json({ error: "Webhook not configured" }, { status: 503 });
-    }
+// ── DLQ finalization helper ───────────────────────────────────────────────────
+async function markDlq(
+    db: ReturnType<typeof getServiceDb>,
+    dlqId: string,
+    success: boolean
+): Promise<void> {
+    await db
+        .from("webhook_events")
+        .update({ status: success ? "processed" : "failed", processed_at: new Date().toISOString() })
+        .eq("id", dlqId);
+}
 
-    const rawBody = await req.text();
-    const signature = req.headers.get("stripe-signature") ?? "";
-
-    const isValid = await validateStripeSignature(rawBody, signature, webhookSecret);
-    if (!isValid) {
-        console.warn(`[webhooks/stripe] [${correlationId}] Invalid signature`);
-        return NextResponse.json({ error: "Invalid signature" }, { status: 403 });
-    }
-
-    const event = JSON.parse(rawBody) as {
-        type: string;
-        data: { object: Record<string, unknown> };
-    };
-
-    const db = getServiceDb();
-
+// ── Business logic — exported so the retry cron can re-process failed events ──
+export async function processStripePayload(
+    db: ReturnType<typeof getServiceDb>,
+    event: StripeEvent,
+    correlationId: string
+): Promise<boolean> {
     try {
         switch (event.type) {
             case "checkout.session.completed": {
@@ -87,7 +92,6 @@ export async function POST(req: NextRequest) {
                 const plan = (userId?.plan ?? "pro") as string;
 
                 if (userId?.user_id) {
-                    // Upsert organization record for the user
                     const { data: existingOrg } = await db
                         .from("organizations")
                         .select("id")
@@ -165,10 +169,67 @@ export async function POST(req: NextRequest) {
                 // Ignore unhandled events
                 break;
         }
+        return true;
     } catch (err) {
-        console.error(`[webhooks/stripe] [${correlationId}] Handler error for ${event.type}:`, err);
-        return NextResponse.json({ error: "Internal handler error" }, { status: 500 });
+        logger.error({ err, correlationId, eventType: event.type }, "webhooks/stripe: handler error");
+        return false;
     }
+}
+
+export async function POST(req: NextRequest) {
+    const correlationId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    if (!webhookSecret) {
+        logger.error({ correlationId }, "webhooks/stripe: STRIPE_WEBHOOK_SECRET not configured");
+        return NextResponse.json({ error: "Webhook not configured" }, { status: 503 });
+    }
+
+    const rawBody = await req.text();
+    const signature = req.headers.get("stripe-signature") ?? "";
+
+    const isValid = await validateStripeSignature(rawBody, signature, webhookSecret);
+    if (!isValid) {
+        logger.warn({ correlationId }, "webhooks/stripe: invalid signature — rejected");
+        return NextResponse.json({ error: "Invalid signature" }, { status: 403 });
+    }
+
+    const event = JSON.parse(rawBody) as StripeEvent;
+    const db = getServiceDb();
+
+    // ── Persist to DLQ before any processing ──────────────────────────────
+    const { data: dlqRow, error: dlqError } = await db
+        .from("webhook_events")
+        .upsert(
+            { provider: "stripe", event_id: event.id, payload: JSON.parse(rawBody), status: "pending" },
+            { onConflict: "provider,event_id", ignoreDuplicates: true }
+        )
+        .select("id")
+        .maybeSingle();
+
+    if (dlqError) {
+        logger.error({ err: dlqError, correlationId, eventId: event.id }, "webhooks/stripe: DLQ insert failed — processing anyway");
+    }
+
+    // Idempotency: if the row was a duplicate (already processed), skip silently.
+    if (!dlqRow && !dlqError) {
+        return NextResponse.json({ received: true }, { headers: { "x-request-id": correlationId } });
+    }
+
+    const dlqId = dlqRow?.id as string | undefined;
+
+    // ── Return 200 immediately; process in the background ─────────────────
+    // waitUntil keeps the Vercel function alive until the promise resolves.
+    // Stripe receives the 200 ack instantly, preventing unnecessary retries.
+    // On error, the DLQ row stays 'failed' and the retry cron picks it up.
+    waitUntil(
+        processStripePayload(db, event, correlationId)
+            .then((success) => { if (dlqId) return markDlq(db, dlqId, success); })
+            .catch((err) => {
+                logger.error({ err, correlationId }, "webhooks/stripe: background processing error");
+                if (dlqId) return markDlq(db, dlqId, false);
+            })
+    );
 
     return NextResponse.json({ received: true }, { headers: { "x-request-id": correlationId } });
 }

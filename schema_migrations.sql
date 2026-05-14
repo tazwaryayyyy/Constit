@@ -134,3 +134,106 @@ ALTER TABLE organizations ADD COLUMN IF NOT EXISTS stripe_customer_id   text;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS stripe_subscription_id text;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS subscription_status  text DEFAULT 'inactive'
   CHECK (subscription_status IN ('inactive', 'active', 'past_due', 'canceled'));
+
+-- ── Migration 9: webhook_events dead-letter queue ─────────────────────────
+-- Every received webhook is persisted here BEFORE processing.
+-- If the business-logic write fails, the raw payload survives for manual retry.
+-- Provider retries are absorbed by the UNIQUE constraint (idempotent receipts).
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider     TEXT NOT NULL,           -- 'twilio' or 'stripe'
+  -- Twilio status callbacks: MessageSid:MessageStatus  (e.g. SMxxx:delivered)
+  -- Twilio inbound replies:  MessageSid:inbound
+  -- Stripe events:           Stripe event ID           (e.g. evt_1AbCDEF...)
+  event_id     TEXT NOT NULL,
+  payload      JSONB NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'processed', 'failed')),
+  processed_at TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Prevents double-processing of the exact same webhook delivery.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_events_provider_event
+  ON webhook_events (provider, event_id);
+
+-- Operational index: find all unprocessed events for retry jobs.
+CREATE INDEX IF NOT EXISTS idx_webhook_events_status_pending
+  ON webhook_events (status, created_at)
+  WHERE status != 'processed';
+
+-- Only service role should access this table (ops, not end-users).
+ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
+-- No user-facing SELECT policy: only accessible via service role key.
+
+-- ── Migration 10: Simple usage increment (kept for backward compat) ──────────
+-- Prefer claim_contact_quota (Migration 11) for all new writes. This function
+-- is retained so any in-flight requests against the old schema continue to work.
+CREATE OR REPLACE FUNCTION increment_contacts_used(p_owner_id UUID, p_delta INTEGER)
+RETURNS VOID LANGUAGE SQL SECURITY INVOKER AS $$
+  UPDATE organizations
+  SET contacts_used_this_month = contacts_used_this_month + p_delta
+  WHERE owner_id = p_owner_id;
+$$;
+
+-- ── Migration 11: Race-safe atomic quota claim ────────────────────────────────
+-- SELECT ... FOR UPDATE serializes concurrent import requests on the same org row,
+-- so two simultaneous imports can never both pass the limit check at the same time.
+-- Returns JSONB indicating whether the import is allowed:
+--   { "allowed": true,  "reason": "no_org" }               — solo user, no limit
+--   { "allowed": true,  "used": N, "limit": N }            — within limit; counter incremented
+--   { "allowed": false, "used": N, "limit": N, "requested": N } — would exceed limit
+CREATE OR REPLACE FUNCTION claim_contact_quota(p_owner_id UUID, p_delta INTEGER)
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER AS $$
+DECLARE
+  v_used  INTEGER;
+  v_limit INTEGER;
+BEGIN
+  SELECT contacts_used_this_month, contacts_limit
+    INTO v_used, v_limit
+    FROM organizations
+   WHERE owner_id = p_owner_id
+     FOR UPDATE;     -- row-level lock: concurrent callers block here until we commit
+
+  IF NOT FOUND THEN
+    -- No org record means this is a solo user — no billing limit applies.
+    RETURN jsonb_build_object('allowed', true, 'reason', 'no_org');
+  END IF;
+
+  IF v_used + p_delta > v_limit THEN
+    RETURN jsonb_build_object(
+      'allowed',   false,
+      'used',      v_used,
+      'limit',     v_limit,
+      'requested', p_delta
+    );
+  END IF;
+
+  -- Within limit: increment atomically inside this same transaction.
+  UPDATE organizations
+     SET contacts_used_this_month = contacts_used_this_month + p_delta
+   WHERE owner_id = p_owner_id;
+
+  RETURN jsonb_build_object(
+    'allowed',   true,
+    'used',      v_used,
+    'limit',     v_limit,
+    'requested', p_delta
+  );
+END;
+$$;
+
+-- Compensating transaction: call this if the contacts INSERT fails after
+-- claim_contact_quota returned allowed=true, to undo the optimistic increment.
+-- GREATEST(0, ...) guards against negative counts from any double-release.
+CREATE OR REPLACE FUNCTION release_contact_quota(p_owner_id UUID, p_delta INTEGER)
+RETURNS VOID LANGUAGE SQL SECURITY INVOKER AS $$
+  UPDATE organizations
+     SET contacts_used_this_month = GREATEST(0, contacts_used_this_month - p_delta)
+   WHERE owner_id = p_owner_id;
+$$;
+
+-- ── Migration 12: retry_count on webhook_events ───────────────────────────────
+-- Tracks how many times the hourly retry cron has re-attempted a failed event.
+-- The cron stops retrying once retry_count reaches MAX_RETRIES (3).
+ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
